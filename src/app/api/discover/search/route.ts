@@ -21,7 +21,7 @@ export async function GET(req: NextRequest) {
 
   const songs = await dedupe(key, async () => {
     const results = await itunesSearch(q, 24, country);
-    await enrichHasLrc(results.slice(0, 10), { concurrency: 4, perCallMs: 2500, budgetMs: 4500 });
+    await enrichHasLrc(results.slice(0, 12), { concurrency: 5, perCallMs: 3000, budgetMs: 5500 });
     return results;
   });
 

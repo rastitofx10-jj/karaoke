@@ -145,6 +145,11 @@ export class KaraokeEngine {
 
   onEnded: (() => void) | null = null;
 
+  /** External (YouTube) clock in seconds — non-null while the YT iframe owns
+   * playback. tick() uses it instead of the (paused) Web Audio position so
+   * melody targets and scoring follow the full-song timeline. */
+  ytPos: number | null = null;
+
   /* ------------------------------------------------------------- power */
 
   async powerOn(): Promise<void> {
@@ -382,6 +387,7 @@ export class KaraokeEngine {
     this.playing = false;
     this.startPos = 0;
     this.ended = false;
+    this.ytPos = null; // the Web Audio graph owns the clock again
     const parsed: LrcSong = opts?.lrcRaw
       ? parseLyrics(opts.lrcRaw, title)
       : { lines: [] };
@@ -760,7 +766,9 @@ export class KaraokeEngine {
   tick(): EngineSnapshot {
     const ctx = this.ctx;
     const dur = this.duration;
-    let pos = this.pos;
+    const external = this.ytPos !== null;
+    let pos = external ? this.ytPos as number : this.pos;
+    const live = this.playing || external;
     const snap: EngineSnapshot = {
       playing: this.playing,
       pos,
@@ -821,7 +829,7 @@ export class KaraokeEngine {
       this.lastSungMidi = det.midi;
 
       /* scoring against melody (key transposition applied inline) */
-      if (this.playing && this.singing && this.song) {
+      if (live && this.singing && this.song) {
         const track = this.song.melody;
         const comp = this.micLatencySec();
         const tSong = Math.max(0, pos - comp);
@@ -839,7 +847,7 @@ export class KaraokeEngine {
         const frame: ScoreFrame = { t: tSong, targetMidi, sungMidi: sung, centsOff: cents };
         this.scoreFrames.push(frame);
         snap.liveScore = rollingScore(this.scoreFrames, ROLLING_WINDOW, tSong);
-      } else if (this.playing && this.song?.melody) {
+      } else if (live && this.song?.melody) {
         const comp = this.micLatencySec();
         const note = melodyAt(this.song.melody, Math.max(0, pos - comp));
         snap.targetMidi = note ? note.midi + this.keySemitones : null;

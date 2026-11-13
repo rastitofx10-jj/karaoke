@@ -36,7 +36,9 @@ export function StudioScreen({ onOpenEditor }: { onOpenEditor: () => void }) {
   const favorites = useKaraoke((s) => s.favorites);
 
   const isFav = activeDiscover ? favorites.some((f) => f.id === activeDiscover.id) : false;
-  const showPreviewBadge = Boolean(activeDiscover && !ytActive);
+  const ytResolving = useKaraoke((s) => s.ytResolving);
+  /* the preview badge only appears once the session is really preview-only */
+  const showPreviewBadge = Boolean(activeDiscover && !ytActive && !ytResolving);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
@@ -82,6 +84,12 @@ export function StudioScreen({ onOpenEditor }: { onOpenEditor: () => void }) {
           {ytActive && (
             <span className="kv rounded-full border border-[color-mix(in_srgb,var(--b)_50%,transparent)] bg-[var(--b-soft)] px-2 py-0.5 text-[10px] font-bold text-[var(--b)]">
               {t.fullSong}
+            </span>
+          )}
+          {ytResolving && !ytActive && (
+            <span className="flex items-center gap-1 rounded-full border border-[color-mix(in_srgb,var(--b)_50%,transparent)] bg-[var(--b-soft)] px-2 py-0.5 text-[10px] font-bold text-[var(--b)]">
+              <Loader2 size={10} className="animate-spin" aria-hidden />
+              {t.resolvingFull}
             </span>
           )}
           {syncState === 'synced' && (

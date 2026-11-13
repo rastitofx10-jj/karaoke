@@ -10,6 +10,7 @@ export interface YtPlayer {
   playVideo(): void;
   pauseVideo(): void;
   seekTo(seconds: number, allowSeekAhead: boolean): void;
+  setVolume(volume: number): void;
   destroy(): void;
   getPlayerState(): number;
 }
@@ -56,21 +57,30 @@ function loadYtApi(): Promise<YtNamespace> {
   return ytPromise;
 }
 
-/** Loads the API and creates a player in `el`. Rejects on any failure. */
+/** Loads the API and creates a player in `el`. Rejects on pre-ready failure;
+ * `onError` keeps firing after ready (embed-block errors arrive late). */
 export async function createYtPlayer(
   el: HTMLElement,
   videoId: string,
   onState: (ev: { data: number }) => void,
+  onError?: (code: number) => void,
 ): Promise<YtPlayer> {
   const YT = await loadYtApi();
   return new Promise<YtPlayer>((resolve, reject) => {
+    let settled = false;
     const player = new YT.Player(el, {
       videoId,
       playerVars: { playsinline: 1, rel: 0, modestbranding: 1 },
       events: {
-        onReady: () => resolve(player),
+        onReady: () => {
+          settled = true;
+          resolve(player);
+        },
         onStateChange: onState,
-        onError: () => reject(new Error('player error')),
+        onError: (ev: { data: number }) => {
+          onError?.(ev.data);
+          if (!settled) reject(new Error('player error'));
+        },
       },
     });
   });

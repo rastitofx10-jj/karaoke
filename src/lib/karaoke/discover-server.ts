@@ -208,7 +208,10 @@ export async function lrclibSearch(
   return Array.isArray(data) ? (data as LrcHit[]).slice(0, 8) : [];
 }
 
-/** Exact LRCLIB /api/get lookup — the most precise match when album is known. */
+/** Exact LRCLIB /api/get lookup — the most precise match when album is known.
+ * LRCLIB times out occasionally (measured up to ~7s cold), which used to
+ * drop us to the fuzzy search stage and its mistimed community uploads —
+ * so the exact stage gets one polite retry before giving up. */
 async function lrclibGet(
   opts: { artist: string; title: string; album?: string; durationSec?: number },
   timeoutMs = 9000,
@@ -223,6 +226,29 @@ async function lrclibGet(
   if (!hit || typeof hit !== 'object') return null;
   if (!hit.syncedLyrics && !hit.plainLyrics) return null;
   return hit;
+}
+
+/** The exact lookup with a retry — never more than two shots. */
+async function lrclibGetRetry(
+  opts: { artist: string; title: string; album?: string; durationSec?: number },
+): Promise<LrcHit | null> {
+  let hit = await lrclibGet(opts);
+  if (!hit) {
+    await new Promise((r) => setTimeout(r, 400));
+    hit = await lrclibGet(opts, 11000);
+  }
+  return hit;
+}
+
+/** Last synced timestamp in a record's LRC, seconds (0 when unknown). */
+function lastSyncedTimeSec(syncedLyrics?: string | null): number {
+  if (typeof syncedLyrics !== 'string') return 0;
+  let max = -1;
+  for (const m of syncedLyrics.matchAll(/\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g)) {
+    const t = Number(m[1]) * 60 + Number(m[2]) + (m[3] ? Number(m[3]) / 10 ** m[3].length : 0);
+    if (t > max) max = t;
+  }
+  return max > 0 ? max : 0;
 }
 
 /**
@@ -263,7 +289,10 @@ const normName = (s: string): string =>
     .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim();
 
-/** Pick the hit that best matches artist/title/duration, preferring synced. */
+/** Pick the hit that best matches artist/title/duration, preferring synced.
+ * Coverage bonus: a synced record whose last line lands past 55% of its
+ * duration is the real full-song timeline — truncated / mistimed community
+ * uploads (lyrics starting mid-song) lose to complete ones. */
 export function pickBestHit(hits: LrcHit[], artist: string, title: string, durationSec?: number): LrcHit | null {
   const na = normName(artist);
   const nt = normName(title);
@@ -285,6 +314,10 @@ export function pickBestHit(hits: LrcHit[], artist: string, title: string, durat
     }
     if (durationSec && typeof h.duration === 'number') {
       score -= Math.min(Math.abs(h.duration - durationSec), 40);
+    }
+    if (h.syncedLyrics && typeof h.duration === 'number' && h.duration > 0) {
+      const last = lastSyncedTimeSec(h.syncedLyrics);
+      if (last >= h.duration * 0.55) score += 4; // complete timeline
     }
     if (score > bestScore) {
       bestScore = score;
@@ -616,26 +649,20 @@ export async function getPreviewSync(previewUrl: string, lines: LrcLine[], songD
 }
 
 /* ------------------------------------------------------------------ */
-/* prepare — lyrics + offset in one shot                               */
+/* prepare — lyrics for the active song                               */
 /* ------------------------------------------------------------------ */
 
-export async function prepareLyrics(opts: {
+/** Locate the best LRCLIB record for a song (3-stage lookup). Never throws. */
+async function findBestLrcHit(opts: {
   artist: string;
   title: string;
   album?: string;
   durationMs?: number;
-  previewUrl?: string;
-}): Promise<PrepareResult> {
-  const none: PrepareResult = {
-    found: false, synced: false, lrc: null, plainLyrics: null, offsetSec: null, confidence: 0, match: null,
-  };
+}): Promise<LrcHit | null> {
   const durSec = opts.durationMs && opts.durationMs > 0 ? opts.durationMs / 1000 : 0;
-
-  /* 3-stage lookup: exact get → search(artist+title+album) → search(q).
-   * Every stage logs, so a silent failure can never hide again. */
   let best: LrcHit | null = null;
   try {
-    best = await lrclibGet({ artist: opts.artist, title: opts.title, album: opts.album, durationSec: durSec });
+    best = await lrclibGetRetry({ artist: opts.artist, title: opts.title, album: opts.album, durationSec: durSec });
   } catch {
     best = null;
   }
@@ -659,32 +686,77 @@ export async function prepareLyrics(opts: {
     console.warn(
       `[prepare] no LRCLIB hit after 3 stages: artist=${JSON.stringify(opts.artist)} title=${JSON.stringify(opts.title)} album=${JSON.stringify(opts.album ?? '')}`,
     );
-    return none;
   }
+  return best;
+}
+
+/**
+ * Lyrics for a song, ready to sing. Two timelines:
+ *
+ *  fullMode = true (the v3.0 default path — YouTube full-song playback):
+ *    The full-song LRC is returned with its ORIGINAL timestamps. No ASR,
+ *    no clipping — the full recording and the LRC share one timeline, so
+ *    the sync is exact wherever a full-length source plays.
+ *
+ *  fullMode = false (30s preview fallback):
+ *    The AI preview sync runs — the clip is transcribed and the LRC is
+ *    shifted + clipped into the clip's timeline (the old v2.0 behavior).
+ */
+export async function prepareLyrics(opts: {
+  artist: string;
+  title: string;
+  album?: string;
+  durationMs?: number;
+  previewUrl?: string;
+  fullMode?: boolean;
+}): Promise<PrepareResult> {
+  const none: PrepareResult = {
+    found: false, synced: false, lrc: null, plainLyrics: null, offsetSec: null, confidence: 0, match: null,
+  };
+  const durSec = opts.durationMs && opts.durationMs > 0 ? opts.durationMs / 1000 : 0;
+
+  const best = await findBestLrcHit(opts);
+  if (!best) return none;
 
   const match: PrepareResult['match'] = {
     title: best.trackName ?? opts.title,
     artist: best.artistName ?? opts.artist,
     album: best.albumName ?? null,
   };
-
+  const hitDuration = typeof best.duration === 'number' && best.duration > 0 ? best.duration : null;
   const asPlain = (): string | null => best?.plainLyrics ?? null;
 
   if (!best.syncedLyrics) {
-    return { ...none, found: true, plainLyrics: asPlain(), match };
+    return { ...none, found: true, plainLyrics: asPlain(), match, fullDurationSec: hitDuration };
   }
 
   let parsed;
   try {
     parsed = parseLrc(best.syncedLyrics);
   } catch {
-    return { ...none, found: true, plainLyrics: asPlain(), match };
+    return { ...none, found: true, plainLyrics: asPlain(), match, fullDurationSec: hitDuration };
   }
   const lines = parsed.lines;
   if (lines.length === 0) {
-    return { ...none, found: true, plainLyrics: asPlain(), match };
+    return { ...none, found: true, plainLyrics: asPlain(), match, fullDurationSec: hitDuration };
   }
 
+  /* ---- full-song timeline: original timestamps, nothing to align ---- */
+  if (opts.fullMode) {
+    const tagSafe = (s: string): string => s.replace(/[\[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+    return {
+      found: true,
+      synced: true,
+      lrc: serializeLrc({ title: tagSafe(match.title ?? ''), artist: tagSafe(match.artist ?? ''), lines }),
+      plainLyrics: best.plainLyrics ?? null,
+      offsetSec: null,
+      confidence: 1,
+      match,
+      fullDurationSec: hitDuration,
+    };
+  }
+
+  /* ---- preview timeline: AI offset alignment (v2.0 behavior) ---- */
   const previewUrl = opts.previewUrl && isAllowedPreview(opts.previewUrl) ? opts.previewUrl : undefined;
   if (!previewUrl) {
     return {
@@ -692,6 +764,7 @@ export async function prepareLyrics(opts: {
       found: true,
       plainLyrics: best.plainLyrics ?? lines.map((l) => l.text).join('\n'),
       match,
+      fullDurationSec: hitDuration,
     };
   }
 
@@ -702,6 +775,7 @@ export async function prepareLyrics(opts: {
       found: true,
       plainLyrics: best.plainLyrics ?? lines.map((l) => l.text).join('\n'),
       match,
+      fullDurationSec: hitDuration,
     };
   }
 
@@ -723,7 +797,7 @@ export async function prepareLyrics(opts: {
     });
   }
   if (shifted.length === 0) {
-    return { ...none, found: true, plainLyrics: asPlain(), match };
+    return { ...none, found: true, plainLyrics: asPlain(), match, fullDurationSec: hitDuration };
   }
 
   const tagSafe = (s: string): string => s.replace(/[\[\]]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -735,6 +809,7 @@ export async function prepareLyrics(opts: {
     offsetSec: off,
     confidence: sync.confidence,
     match,
+    fullDurationSec: hitDuration,
   };
 }
 
@@ -815,7 +890,7 @@ export async function getCharts(geo: 'il' | 'us' = 'il'): Promise<DiscoverSong[]
   }
   if (songs.length === 0) return [];
 
-  await enrichHasLrc(songs.slice(0, 10), { concurrency: 4, perCallMs: 2500, budgetMs: 4000 });
+  await enrichHasLrc(songs.slice(0, 12), { concurrency: 5, perCallMs: 3000, budgetMs: 5000 });
   return songs;
 }
 

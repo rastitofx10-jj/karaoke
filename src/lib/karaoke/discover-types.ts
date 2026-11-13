@@ -34,7 +34,8 @@ export interface PrepareResult {
   found: boolean;
   /** Synced (timestamped) lyrics — only when the AI offset succeeded. */
   synced: boolean;
-  /** Full LRC text, timestamps already shifted to the preview timeline. */
+  /** LRC text: full-song mode = original timestamps, preview mode = shifted
+   * into the 30s clip timeline. */
   lrc: string | null;
   plainLyrics: string | null;
   /** Preview start offset inside the full song, seconds (null = unknown). */
@@ -42,6 +43,18 @@ export interface PrepareResult {
   /** 0..1 alignment confidence. */
   confidence: number;
   match: { title: string; artist: string; album: string | null } | null;
+  /** mode=full only: the matched LRCLIB record's duration, seconds. */
+  fullDurationSec?: number | null;
+}
+
+/** One full-song playback candidate resolved server-side from YouTube. */
+export interface YtCandidate {
+  videoId: string;
+  title: string;
+  channel: string;
+  durationSec: number;
+  /** Higher = better match (duration proximity, title/channel tokens). */
+  score: number;
 }
 
 /** `3:45` for a full song duration in ms. Never throws. */

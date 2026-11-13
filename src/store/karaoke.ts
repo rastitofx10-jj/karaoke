@@ -9,7 +9,7 @@ import { create } from 'zustand';
 import type { MicFx, RankKey, ScoreResult, SongMeta, TakeMeta, VocalMode } from '@/lib/karaoke/types';
 import { MIC_FX_DEFAULT } from '@/lib/karaoke/types';
 import type { Lang } from '@/lib/karaoke/i18n';
-import type { DiscoverSong, HotSong } from '@/lib/karaoke/discover-types';
+import type { DiscoverSong, HotSong, YtCandidate } from '@/lib/karaoke/discover-types';
 
 /** Lifecycle of the AI lyric sync for the current song. */
 export type SyncState = 'idle' | 'syncing' | 'synced' | 'plain' | 'none';
@@ -63,6 +63,14 @@ interface KaraokeState {
   /* full-song YouTube mode */
   ytActive: boolean;
   ytVideoId: string | null;
+  /** Ranked fallback list resolved server-side for the active song. */
+  ytCandidates: YtCandidate[];
+  /** Index inside ytCandidates of the currently loaded video. */
+  ytIndex: number;
+  /** 'auto' = resolved from the catalog song, 'manual' = pasted link. */
+  ytSource: 'auto' | 'manual';
+  /** True while /api/discover/youtube is resolving full-song sources. */
+  ytResolving: boolean;
 
   /* song */
   song: UiSong | null;
@@ -133,6 +141,10 @@ export const useKaraoke = create<KaraokeState>((set) => ({
 
   ytActive: false,
   ytVideoId: null,
+  ytCandidates: [],
+  ytIndex: 0,
+  ytSource: 'auto',
+  ytResolving: false,
 
   song: null,
   loadingFile: false,
