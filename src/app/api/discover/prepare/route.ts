@@ -16,8 +16,9 @@ export async function GET(req: NextRequest) {
   const p = req.nextUrl.searchParams;
   const artist = (p.get('artist') ?? '').slice(0, 200);
   const title = (p.get('title') ?? '').slice(0, 200);
+  const album = (p.get('album') ?? '').slice(0, 200);
   const preview = (p.get('preview') ?? '').slice(0, 600);
-  const trackId = (p.get('trackId') ?? '').slice(0, 40);
+  const trackId = p.get('trackId') ?? '';
   const durationMs = Number(p.get('durationMs') ?? '0') || 0;
 
   const none: PrepareResult = {
@@ -33,11 +34,14 @@ export async function GET(req: NextRequest) {
     prepareLyrics({
       artist,
       title,
+      album,
       durationMs,
       previewUrl: isAllowedPreview(preview) ? preview : undefined,
     }),
   );
 
-  memSet(key, result, 10 * 60 * 1000);
+  /* NEGATIVE RESULTS NEVER STICK: a transient LRCLIB hiccup must not poison
+   * a song for 10 minutes (the v2.0 bug that left the stage empty). */
+  memSet(key, result, result.found ? 10 * 60 * 1000 : 45 * 1000);
   return NextResponse.json(result);
 }

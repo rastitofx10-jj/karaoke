@@ -71,3 +71,4 @@ server.log
 .env.*
 !.env.example
 Caddyfile
+tool-results/

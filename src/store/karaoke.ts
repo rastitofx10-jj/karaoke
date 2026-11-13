@@ -29,6 +29,9 @@ interface KaraokeState {
   lang: Lang;
   stageMode: boolean;
 
+  /* v3.0 — screen machine: HOME (search-first landing) ⇄ STUDIO (player) */
+  screen: 'home' | 'studio';
+
   /* live snapshot (updated by rAF) */
   playing: boolean;
   pos: number;
@@ -53,6 +56,13 @@ interface KaraokeState {
   discoverBusyId: string | null;
   syncState: SyncState;
   recentSearches: string[];
+  favorites: DiscoverSong[];
+  /** the catalog song behind the current studio session (share/YT/preview) */
+  activeDiscover: DiscoverSong | null;
+
+  /* full-song YouTube mode */
+  ytActive: boolean;
+  ytVideoId: string | null;
 
   /* song */
   song: UiSong | null;
@@ -93,6 +103,7 @@ export const useKaraoke = create<KaraokeState>((set) => ({
   powered: false,
   lang: 'he',
   stageMode: false,
+  screen: 'home',
 
   playing: false,
   pos: 0,
@@ -117,6 +128,11 @@ export const useKaraoke = create<KaraokeState>((set) => ({
   discoverBusyId: null,
   syncState: 'idle',
   recentSearches: [],
+  favorites: [],
+  activeDiscover: null,
+
+  ytActive: false,
+  ytVideoId: null,
 
   song: null,
   loadingFile: false,

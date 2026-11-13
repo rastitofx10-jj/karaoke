@@ -187,15 +187,42 @@ export interface LrcHit {
 }
 
 export async function lrclibSearch(
-  params: { artist?: string; title?: string; q?: string },
-  timeoutMs = 5000,
+  params: { artist?: string; title?: string; album?: string; q?: string },
+  timeoutMs = 9000,
 ): Promise<LrcHit[]> {
-  const qs =
-    params.q !== undefined
-      ? `q=${encodeURIComponent(params.q)}`
-      : `track_name=${encodeURIComponent(params.title ?? '')}&artist_name=${encodeURIComponent(params.artist ?? '')}`;
-  const data = await getJson<LrcHit[] | { [k: string]: unknown }[]>(`https://lrclib.net/api/search?${qs}`, timeoutMs);
+  let qs: string;
+  if (params.q !== undefined) {
+    qs = `q=${encodeURIComponent(params.q)}`;
+  } else {
+    qs =
+      `track_name=${encodeURIComponent(params.title ?? '')}` +
+      `&artist_name=${encodeURIComponent(params.artist ?? '')}`;
+    if (params.album) qs += `&album_name=${encodeURIComponent(params.album)}`;
+  }
+  let data = await getJson<LrcHit[] | { [k: string]: unknown }[]>(`https://lrclib.net/api/search?${qs}`, timeoutMs);
+  if (!Array.isArray(data) || data.length === 0) {
+    /* LRCLIB is occasionally slow/empty on the first shot — one polite retry */
+    await new Promise((r) => setTimeout(r, 350));
+    data = await getJson<LrcHit[] | { [k: string]: unknown }[]>(`https://lrclib.net/api/search?${qs}`, timeoutMs);
+  }
   return Array.isArray(data) ? (data as LrcHit[]).slice(0, 8) : [];
+}
+
+/** Exact LRCLIB /api/get lookup — the most precise match when album is known. */
+async function lrclibGet(
+  opts: { artist: string; title: string; album?: string; durationSec?: number },
+  timeoutMs = 9000,
+): Promise<LrcHit | null> {
+  const qs = new URLSearchParams({
+    track_name: opts.title,
+    artist_name: opts.artist,
+  });
+  if (opts.album) qs.set('album_name', opts.album);
+  if (opts.durationSec && opts.durationSec > 0) qs.set('duration', String(Math.round(opts.durationSec)));
+  const hit = await getJson<LrcHit>(`https://lrclib.net/api/get?${qs.toString()}`, timeoutMs);
+  if (!hit || typeof hit !== 'object') return null;
+  if (!hit.syncedLyrics && !hit.plainLyrics) return null;
+  return hit;
 }
 
 /**
@@ -595,6 +622,7 @@ export async function getPreviewSync(previewUrl: string, lines: LrcLine[], songD
 export async function prepareLyrics(opts: {
   artist: string;
   title: string;
+  album?: string;
   durationMs?: number;
   previewUrl?: string;
 }): Promise<PrepareResult> {
@@ -603,13 +631,36 @@ export async function prepareLyrics(opts: {
   };
   const durSec = opts.durationMs && opts.durationMs > 0 ? opts.durationMs / 1000 : 0;
 
-  let hits = await lrclibSearch({ artist: opts.artist, title: opts.title });
-  let best = pickBestHit(hits, opts.artist, opts.title, durSec);
-  if (!best) {
-    hits = await lrclibSearch({ q: `${opts.artist} ${opts.title}` });
-    best = pickBestHit(hits, opts.artist, opts.title, durSec);
+  /* 3-stage lookup: exact get → search(artist+title+album) → search(q).
+   * Every stage logs, so a silent failure can never hide again. */
+  let best: LrcHit | null = null;
+  try {
+    best = await lrclibGet({ artist: opts.artist, title: opts.title, album: opts.album, durationSec: durSec });
+  } catch {
+    best = null;
   }
-  if (!best) return none;
+  if (!best) {
+    try {
+      const hits = await lrclibSearch({ artist: opts.artist, title: opts.title, album: opts.album });
+      best = pickBestHit(hits, opts.artist, opts.title, durSec);
+    } catch {
+      best = null;
+    }
+  }
+  if (!best) {
+    try {
+      const hits = await lrclibSearch({ q: `${opts.artist} ${opts.title}` });
+      best = pickBestHit(hits, opts.artist, opts.title, durSec);
+    } catch {
+      best = null;
+    }
+  }
+  if (!best) {
+    console.warn(
+      `[prepare] no LRCLIB hit after 3 stages: artist=${JSON.stringify(opts.artist)} title=${JSON.stringify(opts.title)} album=${JSON.stringify(opts.album ?? '')}`,
+    );
+    return none;
+  }
 
   const match: PrepareResult['match'] = {
     title: best.trackName ?? opts.title,

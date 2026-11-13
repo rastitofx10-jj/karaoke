@@ -1,48 +1,71 @@
 'use client';
 
-/* TITO KARAOKE STUDIO v2.0 — the console layout.
- * Desktop: discover+library | stage | mic+vocal. Mobile: tabs (search first).
- * Stage mode: fullscreen lyrics overlay. Drag&drop import still works.
- * Keyboard: SPACE play · S scan · R rec · M mic · F stage · E editor · / search.
+/* TITO KARAOKE STUDIO v3.0 — THE ONE STAGE.
+ * v2.0 was a mission-control console with a fake power gate, a buried search
+ * and 8.5px text. v3.0 is two screens that do one thing each:
+ *
+ *   HOME  — the song search, front and center, big and beautiful.
+ *   STUDIO— you, the lyrics, the mic. Transport always reachable.
+ *
+ * Keyboard: SPACE play · R record · M mic · F stage · E editor · ESC close.
+ * Deep links: ?song=<b64 catalog song> drops a friend straight into the studio.
+ * The console "powers on" itself the moment you pick a song — no fake door.
  */
 
-import { useEffect, useRef, useState } from 'react';
-import { FileMusic, Keyboard, Library, Mic2, Search, SlidersHorizontal, Theater, PencilLine, ListMusic } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { FileMusic, Keyboard, Languages, Music2 } from 'lucide-react';
 import { useKaraoke } from '@/store/karaoke';
 import { useKaraokeEngine } from '@/hooks/use-engine';
 import { DICTS } from '@/lib/karaoke/i18n';
 import { cn } from '@/lib/utils';
-import { TopBar } from './TopBar';
+import { SearchScreen } from './SearchScreen';
+import { StudioScreen } from './StudioScreen';
+import { LyricsEditor } from './LyricsEditor';
+import { ResultsModal } from './RecorderPanel';
 import { PlayerTransport } from './PlayerTransport';
 import { LyricsStage } from './LyricsStage';
 import { PitchRibbon } from './PitchRibbon';
-import { MicConsole } from './MicConsole';
-import { VocalEnginePanel, MelodyScanPanel } from './VocalEnginePanel';
-import { RecorderPanel, LibraryPanel, ResultsModal } from './RecorderPanel';
-import { LyricsEditor } from './LyricsEditor';
-import { SpectrumCanvas } from './SpectrumCanvas';
-import { DiscoverPanel } from './DiscoverPanel';
 import { Chip } from './controls';
+import { Mic2, SlidersHorizontal } from 'lucide-react';
+import type { DiscoverSong } from '@/lib/karaoke/discover-types';
 
-type MobileTab = 'search' | 'stage' | 'mic' | 'library' | 'rec';
+function decodeSharedSong(raw: string): DiscoverSong | null {
+  try {
+    const json = decodeURIComponent(unescape(atob(decodeURIComponent(raw))));
+    const s = JSON.parse(json) as DiscoverSong;
+    if (s && typeof s.trackId === 'number' && typeof s.previewUrl === 'string' && typeof s.title === 'string') {
+      return s;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 export function KaraokeApp() {
   const actions = useKaraokeEngine();
   const lang = useKaraoke((s) => s.lang);
   const t = DICTS[lang];
-  const powered = useKaraoke((s) => s.powered);
-  const stageMode = useKaraoke((s) => s.stageMode);
+  const screen = useKaraoke((s) => s.screen);
   const song = useKaraoke((s) => s.song);
-  const recording = useKaraoke((s) => s.recording);
+  const playing = useKaraoke((s) => s.playing);
+  const stageMode = useKaraoke((s) => s.stageMode);
   const micActive = useKaraoke((s) => s.micActive);
-  const [tab, setTab] = useState<MobileTab>('search');
+  const recording = useKaraoke((s) => s.recording);
+  const syncState = useKaraoke((s) => s.syncState);
   const [editorOpen, setEditorOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false);
-  const dropRef = useRef<HTMLDivElement>(null);
 
-  /* load persisted state once */
+  /* boot: persisted state + shared deep link */
   useEffect(() => {
     actions.loadPersistedState();
+    const params = new URLSearchParams(window.location.search);
+    const shared = params.get('song');
+    if (shared) {
+      const decoded = decodeSharedSong(shared);
+      if (decoded) void actions.loadDiscoverSong(decoded);
+      window.history.replaceState({}, '', window.location.pathname);
+    }
      
   }, []);
 
@@ -54,8 +77,6 @@ export function KaraokeApp() {
       if (e.code === 'Space') {
         e.preventDefault();
         actions.toggle();
-      } else if (e.key === 's' || e.key === 'S') {
-        void actions.scanMelody();
       } else if (e.key === 'r' || e.key === 'R') {
         actions.toggleRecording();
       } else if (e.key === 'm' || e.key === 'M') {
@@ -74,7 +95,7 @@ export function KaraokeApp() {
      
   }, []);
 
-  /* drag & drop import */
+  /* drag & drop import — still works, but never required */
   useEffect(() => {
     const over = (e: DragEvent) => {
       e.preventDefault();
@@ -104,175 +125,101 @@ export function KaraokeApp() {
      
   }, []);
 
-  const tabs: Array<{ id: MobileTab; label: string; icon: React.ReactNode }> = [
-    { id: 'search', label: t.searchTab, icon: <Search size={15} /> },
-    { id: 'stage', label: t.lyrics, icon: <Theater size={15} /> },
-    { id: 'mic', label: t.mic, icon: <Mic2 size={15} /> },
-    { id: 'library', label: t.library, icon: <Library size={15} /> },
-    { id: 'rec', label: t.recorder, icon: <ListMusic size={15} /> },
-  ];
+  const inStudio = screen === 'studio';
 
   return (
     <div
-      ref={dropRef}
-      className="flex min-h-screen flex-col bg-[var(--ink)]"
+      className={cn(
+        'flex min-h-screen flex-col bg-[var(--ink)]',
+        /* studio is a fixed-height console on desktop: tools scroll inside,
+         * the stage + transport always fit the viewport. Home scrolls free. */
+        inStudio && 'lg:h-screen lg:overflow-hidden',
+      )}
       style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
-      <TopBar />
+      {/* -------------------------------------------------------- top bar */}
+      <header className="flex h-[52px] shrink-0 items-center gap-2 border-b border-[var(--line)] px-3">
+        <button
+          type="button"
+          onClick={() => actions.goHome()}
+          className={cn(
+            'flex items-center gap-2 rounded-lg px-2 py-1 transition-colors',
+            inStudio ? 'text-[var(--dim)] hover:text-[var(--a)]' : 'text-[var(--text)]',
+          )}
+          aria-label={t.home}
+        >
+          <span className="text-[15px] font-black tracking-tight">
+            <span style={{ color: 'var(--a)' }}>TITO</span>
+            <span className="text-[var(--text)]"> KARAOKE</span>
+          </span>
+        </button>
+        <span className="kv hidden rounded border border-[var(--line2)] bg-[var(--well)] px-1.5 py-px text-[9px] text-[var(--faint)] sm:inline">
+          v3.0 · ONE STAGE
+        </span>
 
-      {/* power gate */}
-      {!powered ? (
-        <main className="stage-bg flex flex-1 flex-col items-center justify-center gap-6 p-8 text-center">
-          <div
-            className="text-5xl leading-none font-black tracking-wide sm:text-7xl"
-            style={{ color: 'var(--a)' }}
-          >
-            {t.brand}
-          </div>
-          <p className="max-w-md text-sm leading-relaxed text-[var(--dim)]">{t.footer}</p>
+        <span className="flex-1" />
+
+        {/* now-playing chip — jump back into the studio */}
+        {song && !inStudio && (
           <button
             type="button"
-            onClick={() => void actions.powerOn()}
-            className="flex min-h-[52px] items-center gap-3 rounded-full border-2 border-[color-mix(in_srgb,var(--a)_60%,transparent)] bg-[color-mix(in_srgb,var(--a)_12%,transparent)] px-10 text-base font-black tracking-widest text-[var(--a)] uppercase transition-all hover:bg-[color-mix(in_srgb,var(--a)_22%,transparent)]"
+            onClick={() => actions.setScreen('studio')}
+            className="flex max-w-[40vw] items-center gap-2 rounded-full border border-[color-mix(in_srgb,var(--a)_45%,transparent)] bg-[var(--a-soft)] px-3 py-1.5 text-[11px] font-bold text-[var(--a)]"
+            aria-label={t.studio}
           >
-            ⏻ {t.power}
+            <Music2 size={12} className={playing ? 'animate-pulse' : undefined} aria-hidden />
+            <span className="truncate">{song.title}</span>
           </button>
-          <p className="text-[11px] text-[var(--faint)]">{t.powerOn}</p>
+        )}
+
+        <button
+          type="button"
+          onClick={() => actions.toggleLang()}
+          className="flex h-9 items-center gap-1.5 rounded-lg border border-[var(--line2)] bg-[var(--panel2)] px-3 text-[11px] font-bold text-[var(--dim)] transition-colors hover:text-[var(--text)]"
+          aria-label="language"
+        >
+          <Languages size={14} aria-hidden />
+          {t.lang}
+        </button>
+      </header>
+
+      {/* ------------------------------------------------------- the main */}
+      {inStudio ? (
+        <main className="flex min-h-0 flex-1 flex-col gap-3 p-3">
+          <StudioScreen onOpenEditor={() => setEditorOpen(true)} />
         </main>
       ) : (
-        <main className="flex min-h-0 flex-1 flex-col gap-3 p-3 pb-24 lg:h-[calc(100vh-52px)] lg:pb-3">
-          {/* transport — always visible */}
-          <div className="shrink-0">
-            <PlayerTransport />
-          </div>
-
-          {/* desktop 3-column grid */}
-          <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[320px_minmax(0,1fr)_320px]">
-            {/* left — discover + library + scan */}
-            <div className="disc-scroll hidden min-h-0 flex-col gap-3 overflow-y-auto pe-0.5 lg:flex">
-              <DiscoverPanel />
-              <MelodyScanPanel />
-              <LibraryPanel />
-            </div>
-
-            {/* center — the stage */}
-            <div className={cn('stage-bg panel flex min-h-0 flex-col gap-2 overflow-hidden', tab !== 'stage' && 'hidden lg:flex')}>
-              <LyricsStage />
-              <div className="shrink-0 px-3 pb-3">
-                <PitchRibbon height={110} />
-              </div>
-            </div>
-
-            {/* right — mic + vocal engine + recorder */}
-            <div className="hidden min-h-0 flex-col gap-3 overflow-y-auto lg:flex">
-              <MicConsole />
-              <VocalEnginePanel />
-              <RecorderPanel />
-            </div>
-          </div>
-
-          {/* mobile tabs content */}
-          <div className="lg:hidden">
-            {tab === 'search' && <DiscoverPanel />}
-            {tab === 'library' && (
-              <div className="flex flex-col gap-3">
-                <MelodyScanPanel />
-                <LibraryPanel />
-              </div>
-            )}
-            {tab === 'mic' && (
-              <div className="flex flex-col gap-3">
-                <MicConsole />
-                <VocalEnginePanel />
-              </div>
-            )}
-            {tab === 'rec' && <RecorderPanel />}
-          </div>
-
-          {/* spectrum strip (desktop bottom) */}
-          <div className="hidden shrink-0 lg:block">
-            <SpectrumCanvas height={36} />
-          </div>
+        <main className="flex flex-1 flex-col">
+          <SearchScreen />
         </main>
       )}
 
-      {/* editor + results */}
+      {/* --------------------------------------------------------- footer */}
+      <footer className="mt-auto flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-[var(--line)] px-4 py-1.5">
+        <span className="text-[10px] text-[var(--faint)]">{t.footer}</span>
+        <span className="kv flex items-center gap-1.5 text-[9px] text-[var(--faint)]">
+          <Keyboard size={10} aria-hidden />
+          {t.shortcuts}
+        </span>
+      </footer>
+
+      {/* --------------------------------------------------------- modals */}
       {editorOpen && (
         <LyricsEditor key={song?.id ?? 'no-song'} open={editorOpen} onClose={() => setEditorOpen(false)} />
       )}
       <ResultsModal />
 
-      {/* editor open button */}
-      {powered && (
-        <button
-          type="button"
-          onClick={() => setEditorOpen(true)}
-          className="fixed bottom-24 left-4 z-20 flex h-10 w-10 items-center justify-center rounded-full border border-[var(--line2)] bg-[var(--panel2)] text-[var(--dim)] shadow-lg transition-colors hover:text-[var(--a)] lg:bottom-4"
-          title={t.editor}
-          aria-label={t.editor}
-        >
-          <PencilLine size={16} />
-        </button>
-      )}
-
-      {/* mobile tab bar */}
-      {powered && (
-        <nav
-          className="fixed inset-x-0 bottom-0 z-20 flex items-stretch gap-1 border-t border-[var(--line)] bg-[var(--ink)]/95 p-2 backdrop-blur lg:hidden"
-          style={{ paddingBottom: 'max(8px, env(safe-area-inset-bottom))' }}
-          aria-label="tabs"
-        >
-          {tabs.map((tb) => (
-            <button
-              key={tb.id}
-              type="button"
-              onClick={() => setTab(tb.id)}
-              className={cn(
-                'flex min-h-[44px] flex-1 flex-col items-center justify-center gap-0.5 rounded text-[9px] font-bold transition-colors',
-                tab === tb.id ? 'bg-[var(--a-soft)] text-[var(--a)]' : 'text-[var(--faint)]',
-              )}
-              aria-current={tab === tb.id}
-            >
-              {tb.icon}
-              {tb.label}
-            </button>
-          ))}
-        </nav>
-      )}
-
-      {/* footer */}
-      <footer className="mt-auto hidden shrink-0 items-center justify-between gap-4 border-t border-[var(--line)] px-4 py-1.5 lg:flex">
-        <span className="text-[10px] text-[var(--faint)]">{t.footer}</span>
-        <span className="kv flex items-center gap-1.5 text-[9px] text-[var(--faint)]">
-          <Keyboard size={10} />
-          {t.shortcuts}
-        </span>
-      </footer>
-
-      {/* drag overlay */}
-      {dragOver && (
-        <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-[var(--ink)]/80 backdrop-blur-sm">
-          <div className="flex flex-col items-center gap-3 rounded-xl border-2 border-dashed border-[var(--a)] p-10">
-            <FileMusic size={36} className="text-[var(--a)]" />
-            <span className="text-lg font-bold text-[var(--a)]">{t.dropHere}</span>
-          </div>
-        </div>
-      )}
-
-      {/* stage mode overlay */}
-      {stageMode && (
+      {/* stage mode overlay — the full-screen singing view */}
+      {stageMode && inStudio && (
         <div className="fixed inset-0 z-40 flex flex-col bg-[var(--ink)]">
           <div className="flex items-center justify-between px-4 py-2" style={{ paddingTop: 'max(8px, env(safe-area-inset-top))' }}>
             <div className="flex items-center gap-2">
-              <Theater size={16} className="text-[var(--b)]" />
               <span className="text-sm font-black text-[var(--b)]">{t.stageMode}</span>
-              {recording && (
-                <span className="rec-dot kv text-[10px] text-[var(--crit)]">● {t.recording} {Math.floor(useKaraoke.getState().recSec)}s</span>
-              )}
+              {syncState === 'none' && <span className="kv text-[10px] text-[var(--crit)]">{t.syncNone}</span>}
             </div>
             <div className="flex items-center gap-2">
               <Chip active={micActive} onClick={() => void actions.toggleMic()} accent="good">
-                <Mic2 size={12} className="me-1 inline" />
+                <Mic2 size={12} className="me-1 inline" aria-hidden />
                 {micActive ? t.on : t.enableMic}
               </Chip>
               <Chip active={recording} onClick={() => actions.toggleRecording()} accent="crit">
@@ -283,7 +230,7 @@ export function KaraokeApp() {
                 onClick={() => useKaraoke.getState().patch({ stageMode: false })}
                 className="flex h-8 items-center gap-1.5 rounded border border-[var(--line2)] bg-[var(--panel2)] px-3 text-[11px] font-bold text-[var(--dim)] hover:text-[var(--text)]"
               >
-                <SlidersHorizontal size={12} />
+                <SlidersHorizontal size={12} aria-hidden />
                 {t.close}
               </button>
             </div>
@@ -300,10 +247,13 @@ export function KaraokeApp() {
         </div>
       )}
 
-      {/* song badge for empty stage hint */}
-      {!powered && (
-        <div className="pointer-events-none fixed bottom-3 left-1/2 -translate-x-1/2">
-          <span className="kv text-[9px] tracking-widest text-[var(--faint)] uppercase">{t.version}</span>
+      {/* drag overlay */}
+      {dragOver && (
+        <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-[var(--ink)]/80 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-3 rounded-xl border-2 border-dashed border-[var(--a)] p-10">
+            <FileMusic size={36} className="text-[var(--a)]" aria-hidden />
+            <span className="text-lg font-bold text-[var(--a)]">{t.dropHere}</span>
+          </div>
         </div>
       )}
     </div>

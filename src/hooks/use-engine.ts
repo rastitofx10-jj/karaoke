@@ -20,6 +20,7 @@ import { useKaraoke } from '@/store/karaoke';
 import { DICTS } from '@/lib/karaoke/i18n';
 import type { LrcSong, RankKey, ScoreResult, TakeMeta, VocalMode } from '@/lib/karaoke/types';
 import type { DiscoverSong, HotSong, PrepareResult } from '@/lib/karaoke/discover-types';
+import { ytActivePlayer } from '@/lib/karaoke/yt';
 
 let engine: KaraokeEngine | null = null;
 export function getEngine(): KaraokeEngine {
@@ -85,20 +86,35 @@ export function useKaraokeEngine() {
       if (e.ready) {
         const s = e.tick();
         const st = useKaraoke.getState();
-        st.patch({
-          playing: s.playing,
-          pos: s.pos,
-          duration: s.duration,
-          songLevel: s.songLevel,
-          micLevel: s.micLevel,
-          micPitchMidi: s.micPitchMidi,
-          micPitchHz: s.micPitchHz,
-          clarity: s.clarity,
-          targetMidi: s.targetMidi,
-          liveScore: s.liveScore,
-          recording: s.recording,
-          recSec: s.recSec,
-        });
+        /* In YouTube mode the YT player owns the clock (pos/duration/playing);
+         * the engine only feeds the mic + score channels. */
+        if (st.ytActive) {
+          st.patch({
+            micLevel: s.micLevel,
+            micPitchMidi: s.micPitchMidi,
+            micPitchHz: s.micPitchHz,
+            clarity: s.clarity,
+            targetMidi: s.targetMidi,
+            liveScore: s.liveScore,
+            recording: s.recording,
+            recSec: s.recSec,
+          });
+        } else {
+          st.patch({
+            playing: s.playing,
+            pos: s.pos,
+            duration: s.duration,
+            songLevel: s.songLevel,
+            micLevel: s.micLevel,
+            micPitchMidi: s.micPitchMidi,
+            micPitchHz: s.micPitchHz,
+            clarity: s.clarity,
+            targetMidi: s.targetMidi,
+            liveScore: s.liveScore,
+            recording: s.recording,
+            recSec: s.recSec,
+          });
+        }
       }
       rafRef.current = requestAnimationFrame(loop);
     };
@@ -166,6 +182,10 @@ export function useKaraokeEngine() {
           loadingFile: false,
           lastTake: null,
           peaks: loaded.peaks,
+          screen: 'studio',
+          activeDiscover: null,
+          ytActive: false,
+          ytVideoId: null,
         });
         // persist to the library
         await dbReady();
@@ -214,6 +234,10 @@ export function useKaraokeEngine() {
           libOpen: false,
           lastTake: null,
           peaks: e.song?.peaks ?? null,
+          screen: 'studio',
+          activeDiscover: null,
+          ytActive: false,
+          ytVideoId: null,
         });
       } catch {
         toast.error(t().error, { description: rec.title });
@@ -239,14 +263,44 @@ export function useKaraokeEngine() {
     },
 
     /* --------------------------- transport ---------------------------- */
-    play() { void getEngine().play(); },
-    pause() { getEngine().pause(); },
+    play() {
+      const st = useKaraoke.getState();
+      if (st.ytActive && ytActivePlayer.current) {
+        ytActivePlayer.current.playVideo();
+        useKaraoke.getState().patch({ playing: true });
+        return;
+      }
+      void getEngine().play();
+    },
+    pause() {
+      const st = useKaraoke.getState();
+      if (st.ytActive && ytActivePlayer.current) {
+        ytActivePlayer.current.pauseVideo();
+        useKaraoke.getState().patch({ playing: false });
+        return;
+      }
+      getEngine().pause();
+    },
     toggle() {
+      const st = useKaraoke.getState();
+      if (st.ytActive) {
+        if (st.playing) this.pause();
+        else this.play();
+        return;
+      }
       const e = getEngine();
       if (e.playing) e.pause();
       else void e.play();
     },
-    seek(t: number) { getEngine().seek(t); },
+    seek(t: number) {
+      const st = useKaraoke.getState();
+      if (st.ytActive && ytActivePlayer.current) {
+        ytActivePlayer.current.seekTo(t, true);
+        useKaraoke.getState().patch({ pos: t });
+        return;
+      }
+      getEngine().seek(t);
+    },
     setLoopA() {
       const e = getEngine();
       e.setLoop(e.pos, e.loopB);
@@ -355,13 +409,19 @@ export function useKaraokeEngine() {
     setLyricsRaw(raw: string, filename?: string) {
       const e = getEngine();
       if (!e.song) return;
-      const parsed: LrcSong = parseLyrics(raw, filename);
-      const lines = withDerivedEnds(parsed.lines, e.duration);
-      e.song.lyrics = lines;
-      e.song.lrcRaw = raw;
-      const st = useKaraoke.getState();
-      st.patch({ song: st.song ? { ...st.song, hasLrc: lines.length > 0 } : null });
-      void dbReady().then(() => updateSong(e.song!.id, { lrc: raw }));
+      try {
+        const parsed: LrcSong = parseLyrics(raw, filename);
+        const lines = withDerivedEnds(parsed.lines, e.duration);
+        e.song.lyrics = lines;
+        e.song.lrcRaw = raw;
+        const st = useKaraoke.getState();
+        st.patch({ song: st.song ? { ...st.song, hasLrc: lines.length > 0 } : null });
+        void dbReady().then(() => updateSong(e.song!.id, { lrc: raw }));
+      } catch (err) {
+        /* A bad LRC payload must never silently kill the studio session —
+         * this was the v2.0 path that left the stage empty. */
+        console.warn('[karaoke] parseLyrics failed', err);
+      }
     },
     exportLrc(): string | null {
       const e = getEngine();
@@ -534,6 +594,11 @@ export function useKaraokeEngine() {
         loadingFile: true,
         syncState: 'syncing',
         resultsOpen: false,
+        /* v3.0: jump straight into the studio; remember the catalog song */
+        screen: 'studio',
+        activeDiscover: song,
+        ytActive: false,
+        ytVideoId: null,
       });
 
       const applyLyrics = (prep: PrepareResult | null): void => {
@@ -559,7 +624,9 @@ export function useKaraokeEngine() {
         const existing = await dbReady().then(() => getSong(id)).catch(() => null);
         if (existing) {
           await this.loadFromLibrary(id);
-          useKaraoke.getState().patch({ discoverBusyId: null, loadingFile: false });
+          /* loadFromLibrary is also used for plain local files — restore the
+           * catalog identity (share/YouTube/full-song panel) for this path. */
+          useKaraoke.getState().patch({ activeDiscover: song, discoverBusyId: null, loadingFile: false });
           void getEngine().play();
           void this.logPlay(song);
           if (existing.lrc) {
@@ -611,6 +678,10 @@ export function useKaraokeEngine() {
         void e.play();
         void this.logPlay(song);
 
+        /* v3.0: previews are short — scan the melody quietly right after
+         * start so pitch scoring just works, no secret key required. */
+        if (buffer.duration <= 45) void this.autoScanMelody(id);
+
         // lyrics arrive while the song is already playing
         applyLyrics(await prepPromise);
       } catch {
@@ -642,9 +713,121 @@ export function useKaraokeEngine() {
       void dbReady().then(() => updateSong(e.song!.id, { lrc: raw }));
     },
 
+    /* ------------------------------ v3.0 ------------------------------ */
+
+    /* screens */
+    setScreen(screen: 'home' | 'studio') {
+      useKaraoke.getState().patch({ screen });
+      if (screen === 'home') {
+        /* leaving the studio kills the YT full-song mode */
+        if (useKaraoke.getState().ytActive) this.setYt(null);
+      }
+    },
+
+    goHome() {
+      this.setScreen('home');
+    },
+
+    /** Full-song YouTube mode on/off. null clears it. */
+    setYt(videoId: string | null) {
+      const e = getEngine();
+      if (videoId) {
+        e.pause();
+        useKaraoke.getState().patch({ ytActive: true, ytVideoId: videoId, playing: true, pos: 0 });
+      } else {
+        useKaraoke.getState().patch({ ytActive: false, ytVideoId: null });
+        if (e.song) {
+          e.seek(0);
+          void e.play();
+        }
+      }
+    },
+
+    /** Re-fetch lyrics for the active catalog song (the "try again" button). */
+    async retryLyrics() {
+      const st = useKaraoke.getState();
+      const song = st.activeDiscover;
+      if (!song) return;
+      const e = getEngine();
+      st.patch({ syncState: 'syncing' });
+      try {
+        const prep = await fetchPrepare(song);
+        const eng = getEngine();
+        if (!eng.song) return;
+        if (prep?.lrc) {
+          this.setLyricsRaw(prep.lrc);
+          useKaraoke.getState().patch({ syncState: 'synced' });
+          toast.success(t().syncDone, { description: `${song.artist} · ${song.title}` });
+        } else if (prep?.plainLyrics) {
+          this.setLyricsRaw(prep.plainLyrics);
+          useKaraoke.getState().patch({ syncState: 'plain' });
+          toast.info(t().syncPlain, { description: `${song.artist} · ${song.title}` });
+        } else {
+          useKaraoke.getState().patch({ syncState: 'none' });
+          toast.warning(t().syncNone, { description: `${song.artist} · ${song.title}` });
+        }
+      } catch {
+        useKaraoke.getState().patch({ syncState: 'none' });
+        toast.error(t().networkError);
+      }
+    },
+
+    /** Favorites — heart any catalog song, stored in localStorage. */
+    isFavorite(id: string): boolean {
+      return useKaraoke.getState().favorites.some((f) => f.id === id);
+    },
+
+    toggleFavorite(song: DiscoverSong) {
+      const st = useKaraoke.getState();
+      const exists = st.favorites.some((f) => f.id === song.id);
+      const favorites = exists ? st.favorites.filter((f) => f.id !== song.id) : [song, ...st.favorites].slice(0, 60);
+      useKaraoke.getState().patch({ favorites });
+      setSetting('favorites', favorites);
+      toast.success(exists ? t().removeFav : t().addFav, { description: `${song.artist} · ${song.title}` });
+    },
+
+    /** Copy a deep link that reopens this exact song in the studio. */
+    async shareSong() {
+      const song = useKaraoke.getState().activeDiscover;
+      if (!song) return;
+      try {
+        const encoded = encodeURIComponent(btoa(unescape(encodeURIComponent(JSON.stringify(song)))));
+        const url = `${location.origin}${location.pathname}?song=${encoded}`;
+        await navigator.clipboard.writeText(url);
+        toast.success(t().shareCopied);
+      } catch {
+        toast.error(t().error);
+      }
+    },
+
+    /** Silent background melody scan for short clips (scoring on by default). */
+    async autoScanMelody(songId: string) {
+      const e = getEngine();
+      await new Promise((r) => setTimeout(r, 1500));
+      if (!e.song || e.song.id !== songId) return;
+      if (e.song.melody && e.song.melody.notes.length > 0) return;
+      if (useKaraoke.getState().scanning) return;
+      try {
+        const track = await e.scanMelody();
+        if (!track || track.notes.length === 0) return;
+        const st = useKaraoke.getState();
+        st.patch({ song: st.song && st.song.id === songId ? { ...st.song, hasMelody: true } : st.song });
+        await dbReady();
+        await updateSong(songId, { melody: track });
+        actions.refreshLibrary();
+        toast.success(t().autoScanDone);
+      } catch {
+        /* silent — scoring stays off, never breaks playback */
+      }
+    },
+
     loadPersistedState() {
       const l = getSetting<('he' | 'en')>('lang', 'he');
-      useKaraoke.getState().patch({ lang: l });
+      const favorites = getSetting<DiscoverSong[]>('favorites', []);
+      useKaraoke.getState().patch({
+        lang: l,
+        favorites: Array.isArray(favorites) ? favorites.filter((f) => f && f.id && f.previewUrl) : [],
+      });
       actions.refreshLibrary();
       actions.refreshTakes();
     },

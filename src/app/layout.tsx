@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Rubik, Azeret_Mono } from "next/font/google";
 import "./globals.css";
-import { Toaster } from "@/components/ui/toaster";
+import { Toaster } from "@/components/ui/sonner";
 
 const rubik = Rubik({
   variable: "--font-rubik",
@@ -16,9 +16,9 @@ const azeretMono = Azeret_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "TITO KARAOKE STUDIO v2.0 · אולפן קריוקי טיטו",
+  title: "TITO KARAOKE v3.0 · אולפן קריוקי טיטו — ONE STAGE",
   description:
-    "אולפן קריוקי מקצועי בדפדפן: חיפוש שירים מובנה ללא ייבוא קבצים, מילים מסונכרנות אוטומטית ב-AI, הסרת קולות חיה, שינוי מפתח, ניקוד זמרים בזמן אמת, הקלטות ואפקטים. Professional browser karaoke studio: built-in song search, AI-synced lyrics, live vocal removal, key shift, real-time singing score, recording and mic effects.",
+    "קריוקי בדפדפן שסוף סוף עובד: חיפוש שירים מובנה (בלי ייבוא קבצים), מילים מסונכרנות אוטומטית ברמת המילה עם AI, שיר מלא דרך YouTube, הסרת קולות חיה, ניקוד זמרים בזמן אמת והקלטות. A karaoke studio that finally works: built-in search, AI-synced word-level lyrics, full songs via YouTube, live vocal removal, real-time scoring and recordings.",
   keywords: [
     "karaoke",
     "קריוקי",
@@ -50,7 +50,7 @@ export default function RootLayout({
         className={`${rubik.variable} ${azeretMono.variable} antialiased bg-background text-foreground`}
       >
         {children}
-        <Toaster />
+        <Toaster position="top-center" richColors theme="dark" />
       </body>
     </html>
   );
