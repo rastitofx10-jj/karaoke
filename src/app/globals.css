@@ -1,0 +1,298 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-rubik);
+  --font-mono: var(--font-mono);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* TITO KARAOKE STUDIO — dark console, amber stage light + rose neon.
+   The app is dark-only: :root carries the dark palette directly. */
+:root {
+  --radius: 0.5rem;
+  --ink: #0d0f14;
+  --panel: #14171e;
+  --panel2: #1a1e27;
+  --well: #0a0c10;
+  --line: #262c38;
+  --line2: #333b4a;
+  --text: #ede8df;
+  --dim: #9aa3b2;
+  --faint: #7e8794;
+
+  --a: #f5a83b;            /* amber — stage light, primary */
+  --a-soft: rgba(245, 168, 59, 0.14);
+  --b: #f2568f;            /* rose neon — secondary */
+  --b-soft: rgba(242, 86, 143, 0.14);
+  --good: #6fd08c;
+  --warn: #e8c74d;
+  --crit: #f06060;
+
+  --background: var(--ink);
+  --foreground: var(--text);
+  --card: var(--panel);
+  --card-foreground: var(--text);
+  --popover: var(--panel2);
+  --popover-foreground: var(--text);
+  --primary: var(--a);
+  --primary-foreground: #171208;
+  --secondary: var(--panel2);
+  --secondary-foreground: var(--text);
+  --muted: var(--panel2);
+  --muted-foreground: var(--dim);
+  --accent: var(--a-soft);
+  --accent-foreground: var(--a);
+  --destructive: var(--crit);
+  --border: var(--line);
+  --input: var(--line);
+  --ring: var(--a);
+  --chart-1: var(--a);
+  --chart-2: var(--b);
+  --chart-3: var(--good);
+  --chart-4: var(--warn);
+  --chart-5: var(--dim);
+  --sidebar: var(--panel);
+  --sidebar-foreground: var(--text);
+  --sidebar-primary: var(--a);
+  --sidebar-primary-foreground: #171208;
+  --sidebar-accent: var(--a-soft);
+  --sidebar-accent-foreground: var(--a);
+  --sidebar-border: var(--line);
+  --sidebar-ring: var(--a);
+  color-scheme: dark;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body {
+    height: 100%;
+  }
+  body {
+    @apply bg-background text-foreground;
+    background: var(--ink);
+    font-family: var(--font-rubik), system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overscroll-behavior: none;
+  }
+  ::selection {
+    background: var(--a-soft);
+    color: var(--a);
+  }
+}
+
+/* ---------- console primitives ---------- */
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--dim);
+  font-family: var(--font-mono), monospace;
+}
+
+.panel-title svg {
+  width: 13px;
+  height: 13px;
+  color: var(--a);
+}
+
+.kv {
+  font-family: var(--font-mono), monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+
+/* amber glow for the active stage elements */
+.glow-a {
+  text-shadow:
+    0 0 18px rgba(245, 168, 59, 0.45),
+    0 0 42px rgba(245, 168, 59, 0.18);
+}
+.glow-b {
+  text-shadow:
+    0 0 18px rgba(242, 86, 143, 0.5),
+    0 0 42px rgba(242, 86, 143, 0.2);
+}
+
+/* custom scrollbar — thin, console-grade */
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--line2);
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--dim);
+}
+
+/* big lyric stage typography */
+.stage-line {
+  font-weight: 800;
+  line-height: 1.18;
+  letter-spacing: 0.01em;
+}
+
+/* word fill sweep: the sung part is clipped over the unsung base */
+.fill-base {
+  color: var(--faint);
+}
+.fill-sung {
+  color: var(--a);
+}
+
+/* range inputs styled as console faders */
+input[type='range'].fader {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 22px;
+  background: transparent;
+  cursor: pointer;
+}
+input[type='range'].fader::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(
+    to left,
+    var(--a) 0%,
+    var(--a) var(--pct, 50%),
+    var(--line2) var(--pct, 50%),
+    var(--line2) 100%
+  );
+}
+input[type='range'].fader::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: var(--text);
+  border: 2px solid var(--a);
+}
+input[type='range'].fader::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line2);
+}
+input[type='range'].fader::-moz-range-progress {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--a);
+}
+input[type='range'].fader::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text);
+  border: 2px solid var(--a);
+}
+
+/* canvas elements never blur */
+canvas {
+  display: block;
+}
+
+/* pulse for the live REC dot */
+@keyframes rec-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+.rec-dot {
+  animation: rec-pulse 1.1s ease-in-out infinite;
+}
+
+/* marquee-ish entrance for a fresh stage line */
+@keyframes line-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.line-in {
+  animation: line-in 0.35s ease-out;
+}
+
+/* stage spotlight backdrop */
+.stage-bg {
+  background:
+    radial-gradient(ellipse 70% 55% at 50% -12%, rgba(245, 168, 59, 0.09), transparent 62%),
+    radial-gradient(ellipse 45% 40% at 85% 115%, rgba(242, 86, 143, 0.07), transparent 60%),
+    var(--ink);
+}
+
+/* touch targets obey the 44px law on coarse pointers */
+@media (pointer: coarse) {
+  button,
+  [role='button'],
+  a,
+  input[type='checkbox'],
+  input[type='range'] {
+    min-height: 36px;
+  }
+}
