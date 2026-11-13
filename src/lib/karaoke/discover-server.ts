@@ -71,10 +71,10 @@ export async function dedupe<T>(key: string, fn: () => Promise<T>): Promise<T> {
 
 const UA = 'TitoKaraokeStudio/2.0 (browser karaoke; +https://localhost)';
 
-async function getJson<T>(url: string, timeoutMs = 8000): Promise<T | null> {
+async function getJson<T>(url: string, timeoutMs = 8000, extraHeaders?: Record<string, string>): Promise<T | null> {
   try {
     const res = await fetch(url, {
-      headers: { 'User-Agent': UA },
+      headers: { 'User-Agent': UA, ...(extraHeaders ?? {}) },
       signal: AbortSignal.timeout(timeoutMs),
       cache: 'no-store',
     });
@@ -184,6 +184,8 @@ export interface LrcHit {
   instrumental?: boolean;
   plainLyrics?: string | null;
   syncedLyrics?: string | null;
+  /** which provider served this record — 'lrclib' (default) or 'netease' */
+  source?: string;
 }
 
 export async function lrclibSearch(
@@ -325,6 +327,122 @@ export function pickBestHit(hits: LrcHit[], artist: string, title: string, durat
     }
   }
   return best;
+}
+
+/* ------------------------------------------------------------------ */
+/* NetEase Music — the second lyrics provider (v3.5)                   */
+/*                                                                     */
+/* Hunted DNA: LRCLIB alone leaves coverage holes (measured: 0 hits    */
+/* for popular songs; whole regions thin). NetEase Music's public web  */
+/* API serves SYNCED LRC (same [mm:ss.mmm] format) for a huge          */
+/* international catalog, is reachable from datacenter IPs (Genius     */
+/* 403s, Lyrist sits behind a Vercel JS wall — both measured dead),    */
+/* and needs no key. It runs as stage 4 of the lyric cascade, after    */
+/* LRCLIB's three stages — never in front of it. Every call is total.  */
+/* ------------------------------------------------------------------ */
+
+const NETEASE_UA =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36';
+
+interface NetEaseSong {
+  id?: number;
+  name?: string;
+  duration?: number; // ms
+  artists?: { name?: string }[];
+  album?: { name?: string };
+}
+
+/** NetEase search → song candidates. Total: any failure → []. */
+async function neteaseSearch(q: string, timeoutMs = 7000): Promise<NetEaseSong[]> {
+  try {
+    const url = `https://music.163.com/api/search/get?s=${encodeURIComponent(q)}&type=1&limit=8`;
+    const data = await getJson<{ result?: { songs?: NetEaseSong[] } }>(url, timeoutMs, {
+      'User-Agent': NETEASE_UA,
+      Referer: 'https://music.163.com/',
+    });
+    const songs = data?.result?.songs;
+    return Array.isArray(songs) ? songs : [];
+  } catch {
+    return [];
+  }
+}
+
+/** NetEase synced LRC for a song id. Total: any failure → ''. */
+async function neteaseLyrics(songId: number, timeoutMs = 7000): Promise<string> {
+  try {
+    const url = `https://music.163.com/api/song/lyric?id=${songId}&lv=1&kv=1&tv=-1`;
+    const data = await getJson<{ lrc?: { lyric?: string } }>(url, timeoutMs, {
+      'User-Agent': NETEASE_UA,
+      Referer: 'https://music.163.com/',
+    });
+    const lrc = data?.lrc?.lyric;
+    return typeof lrc === 'string' ? lrc : '';
+  } catch {
+    return '';
+  }
+}
+
+/** The best NetEase record for a song, as an LrcHit. Total: never throws,
+ * returns null when NetEase has nothing usable (no lyrics in its catalog
+ * for the song — common for Israeli releases; the cascade then falls
+ * through to plain/manual). */
+async function neteaseBestHit(opts: {
+  artist: string;
+  title: string;
+  durationMs?: number;
+}): Promise<LrcHit | null> {
+  const q = `${opts.title} ${opts.artist}`.trim();
+  if (!q) return null;
+  const songs = await neteaseSearch(q);
+  if (songs.length === 0) return null;
+
+  /* same matching discipline as LRCLIB's pickBestHit: normalized
+   * artist/title equality + duration proximity */
+  const na = normName(opts.artist);
+  const nt = normName(opts.title);
+  const durSec = opts.durationMs && opts.durationMs > 0 ? opts.durationMs / 1000 : 0;
+  let best: NetEaseSong | null = null;
+  let bestScore = -Infinity;
+  for (const s of songs) {
+    if (typeof s.id !== 'number' || !s.name) continue;
+    let score = 0;
+    const sa = normName((s.artists ?? []).map((a) => a.name ?? '').join(' '));
+    const st = normName(s.name);
+    if (sa && na) {
+      if (sa === na) score += 8;
+      else if (sa.includes(na) || na.includes(sa)) score += 4;
+    }
+    if (st && nt) {
+      if (st === nt) score += 6;
+      else if (st.includes(nt) || nt.includes(st)) score += 3;
+    }
+    const sDur = typeof s.duration === 'number' ? s.duration / 1000 : 0;
+    if (durSec && sDur) score -= Math.min(Math.abs(sDur - durSec), 40);
+    if (score > bestScore) {
+      bestScore = score;
+      best = s;
+    }
+  }
+  /* a title/artist mismatch worse than "vaguely similar" is not a match */
+  if (!best || bestScore < 6) return null;
+
+  const lrc = await neteaseLyrics(best.id as number);
+  if (!lrc.trim()) return null;
+  /* keep only lines with a real timestamp — NetEase prepends credits
+   * (作词/作曲) which our stage already renders fine, and word-level
+   * klyric stays untapped for now (line-level is the karaoke backbone) */
+  const hit: LrcHit = {
+    id: best.id,
+    trackName: best.name,
+    artistName: (best.artists ?? []).map((a) => a.name ?? '').join(', ') || opts.artist,
+    albumName: best.album?.name ?? null,
+    duration: typeof best.duration === 'number' ? Math.round(best.duration / 1000) : null,
+    instrumental: false,
+    syncedLyrics: lrc,
+    plainLyrics: null,
+    source: 'netease',
+  };
+  return hit;
 }
 
 /* ------------------------------------------------------------------ */
@@ -652,7 +770,10 @@ export async function getPreviewSync(previewUrl: string, lines: LrcLine[], songD
 /* prepare — lyrics for the active song                               */
 /* ------------------------------------------------------------------ */
 
-/** Locate the best LRCLIB record for a song (3-stage lookup). Never throws. */
+/** Locate the best lyrics record for a song — the 4-stage provider
+ * cascade (v3.5). Stages 1-3: LRCLIB (exact get, search, fuzzy search).
+ * Stage 4: NetEase synced LRC — fills LRCLIB's coverage holes. Never
+ * throws. */
 async function findBestLrcHit(opts: {
   artist: string;
   title: string;
@@ -682,9 +803,17 @@ async function findBestLrcHit(opts: {
       best = null;
     }
   }
+  /* stage 4 — NetEase (synced LRC where LRCLIB has nothing) */
+  if (!best) {
+    try {
+      best = await neteaseBestHit({ artist: opts.artist, title: opts.title, durationMs: opts.durationMs });
+    } catch {
+      best = null;
+    }
+  }
   if (!best) {
     console.warn(
-      `[prepare] no LRCLIB hit after 3 stages: artist=${JSON.stringify(opts.artist)} title=${JSON.stringify(opts.title)} album=${JSON.stringify(opts.album ?? '')}`,
+      `[prepare] no lyrics after 4 stages (LRCLIB x3 + NetEase): artist=${JSON.stringify(opts.artist)} title=${JSON.stringify(opts.title)} album=${JSON.stringify(opts.album ?? '')}`,
     );
   }
   return best;
@@ -725,20 +854,21 @@ export async function prepareLyrics(opts: {
   };
   const hitDuration = typeof best.duration === 'number' && best.duration > 0 ? best.duration : null;
   const asPlain = (): string | null => best?.plainLyrics ?? null;
+  const provider = best.source ?? 'lrclib';
 
   if (!best.syncedLyrics) {
-    return { ...none, found: true, plainLyrics: asPlain(), match, fullDurationSec: hitDuration };
+    return { ...none, found: true, plainLyrics: asPlain(), match, fullDurationSec: hitDuration, provider };
   }
 
   let parsed;
   try {
     parsed = parseLrc(best.syncedLyrics);
   } catch {
-    return { ...none, found: true, plainLyrics: asPlain(), match, fullDurationSec: hitDuration };
+    return { ...none, found: true, plainLyrics: asPlain(), match, fullDurationSec: hitDuration, provider };
   }
   const lines = parsed.lines;
   if (lines.length === 0) {
-    return { ...none, found: true, plainLyrics: asPlain(), match, fullDurationSec: hitDuration };
+    return { ...none, found: true, plainLyrics: asPlain(), match, fullDurationSec: hitDuration, provider };
   }
 
   /* ---- full-song timeline: original timestamps, nothing to align ---- */
@@ -753,6 +883,7 @@ export async function prepareLyrics(opts: {
       confidence: 1,
       match,
       fullDurationSec: hitDuration,
+      provider,
     };
   }
 
@@ -765,6 +896,7 @@ export async function prepareLyrics(opts: {
       plainLyrics: best.plainLyrics ?? lines.map((l) => l.text).join('\n'),
       match,
       fullDurationSec: hitDuration,
+      provider,
     };
   }
 
@@ -776,6 +908,7 @@ export async function prepareLyrics(opts: {
       plainLyrics: best.plainLyrics ?? lines.map((l) => l.text).join('\n'),
       match,
       fullDurationSec: hitDuration,
+      provider,
     };
   }
 
@@ -797,7 +930,7 @@ export async function prepareLyrics(opts: {
     });
   }
   if (shifted.length === 0) {
-    return { ...none, found: true, plainLyrics: asPlain(), match, fullDurationSec: hitDuration };
+    return { ...none, found: true, plainLyrics: asPlain(), match, fullDurationSec: hitDuration, provider };
   }
 
   const tagSafe = (s: string): string => s.replace(/[\[\]]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -810,6 +943,7 @@ export async function prepareLyrics(opts: {
     confidence: sync.confidence,
     match,
     fullDurationSec: hitDuration,
+    provider,
   };
 }
 

@@ -1,5 +1,74 @@
 # TITO KARAOKE STUDIO — Changelog
 
+## 3.5 — THE HUNTER RELEASE: CLIENT ROTATION + LYRIC CASCADE (2026-11-14)
+
+The "execute with the hunter" release. The hunter's methodology (mine the
+elite's working patterns, apply them with evidence) produced two hardening
+layers, both mined live from GitHub and both verified from this machine.
+
+### THE HUNT (what was mined and why)
+
+- **LuanRT/YouTube.js (5.4k★)** — the reference innertube client. Its
+  Constants file holds the full client roster (exact clientNames, versions,
+  numeric ids, UAs, device models). DNA extracted: the **client rotation
+  chain** — a single innertube recipe dies the moment YouTube walls that one
+  client; the standard is a chain of clients with different bot-wall
+  fingerprints.
+- **kawishbit/akapela** — a self-hostable karaoke app with the same
+  architecture direction (audio-only ADR, YouTube sources, lyrics providers).
+  DNA extracted: the **multi-provider lyrics cascade** with a visible
+  provider chip in the UI ("the screen shows which provider the current
+  Lyrics came from").
+- Provider field tests from this machine (measured, not assumed): **Genius
+  403s** (Cloudflare), **Lyrist sits behind a Vercel JS wall** (429),
+  **NetEase Music's public API works** — synced LRC, no key, reachable from
+  datacenter IPs. NetEase won the fallback slot on evidence.
+
+### PLAYBACK: THE CLIENT ROTATION (yt-audio-server.ts)
+
+- The direct-audio tier now rotates **three verified innertube clients** —
+  VISIONOS (id 101) → ANDROID_VR (id 28, Oculus Quest 3) → IOS (id 5,
+  iPhone) — each with its exact version, UA, device model and numeric client
+  id from the youtubei.js roster. When YouTube walls one client from
+  datacenter IPs, the next still resolves.
+- Every client in the chain was **verified from this machine with live
+  innertube POSTs**: VISIONOS (itags 139,140,249,250,251), ANDROID_VR
+  (139,140,249,251), IOS (139,140) all return cipher-free googlevideo audio
+  URLs. ANDROID (ciphered — needs PO token), TVHTML5 (UNPLAYABLE) and
+  ANDROID_MUSIC (refuses) were tested and **kept out** so no stall budget
+  is wasted on a client that can never resolve.
+- The resolving client's UA also fetches the bytes (googlevideo binds URLs
+  to the requesting client), tracked per-source in a new `client` field.
+
+### LYRICS: THE 4-STAGE PROVIDER CASCADE (discover-server.ts)
+
+- LRCLIB keeps stages 1-3 (exact /api/get → search → fuzzy search). New
+  **stage 4: NetEase Music** — search (`/api/search/get`) → match (the same
+  normalized artist/title/duration discipline as LRCLIB's pickBestHit,
+  with a minimum-match floor so a vague similarity never attaches wrong
+  lyrics) → synced LRC (`/api/song/lyric?lv=1`), the same `[mm:ss.mmm]`
+  format the stage already renders.
+- Every NetEase call is total (any failure → null → the stage falls through
+  to plain/manual), behind the same 9s/7s timeouts, with the browser UA +
+  Referer that the endpoint expects.
+- **Provider transparency (akapela DNA):** the prepare response now carries
+  the provider, and the studio shows a chip — LRCLIB / NETEASE — next to
+  the synced badge, so the singer always knows where the words came from.
+
+### EVIDENCE (all measured live, this session)
+
+- Innertube client matrix (curl, direct POSTs): 3 verified working clients,
+  3 tested-and-rejected, documented in code.
+- Direct-audio probe: `ok:true`, 3.4MB m4a AAC resolved; Range request →
+  HTTP 206 with 64KB slice (passthrough intact).
+- Prepare cascade: Rick Astley full mode → `provider: lrclib`, 59-line
+  synced LRC; BTS Dynamite → `provider: lrclib`; Hebrew catalog probes →
+  NetEase search finds the songs (metadata-only entries return null
+  cleanly — never wrong lyrics).
+- Browser end-to-end: Rick Astley full-song session — iframe tier playing
+  (0:38/3:33, clock advancing), current line highlighted in place, LRCLIB
+  chip visible in the top bar, zero console errors.
+
 ## 3.4 — FULL SONGS, VERIFIED IN THE BROWSER (2026-11-14)
 
 The "find other solutions, use the hunter" release. Field evidence (browser

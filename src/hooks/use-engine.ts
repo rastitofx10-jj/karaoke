@@ -822,14 +822,14 @@ export function useKaraokeEngine() {
               : prep.fullDurationSec ?? (song.durationMs > 0 ? song.durationMs / 1000 : 0)
             : e.duration;
         this.setLyricsForDuration(prep.lrc, dur);
-        st.patch({ syncState: 'synced' });
+        st.patch({ syncState: 'synced', lyricsProvider: prep.provider ?? 'lrclib' });
         toast.success(t().syncDone, { description: `${song.artist} · ${song.title}` });
       } else if (prep?.plainLyrics) {
         this.setLyricsRaw(prep.plainLyrics);
-        st.patch({ syncState: 'plain' });
+        st.patch({ syncState: 'plain', lyricsProvider: prep.provider ?? null });
         toast.info(t().syncPlain, { description: `${song.artist} · ${song.title}` });
       } else {
-        st.patch({ syncState: 'none' });
+        st.patch({ syncState: 'none', lyricsProvider: null });
         toast.warning(t().syncNone, { description: `${song.artist} · ${song.title}` });
       }
     },

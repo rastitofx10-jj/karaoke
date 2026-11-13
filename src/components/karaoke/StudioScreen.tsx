@@ -40,6 +40,7 @@ export function StudioScreen({ onOpenEditor }: { onOpenEditor: () => void }) {
   const isFav = activeDiscover ? favorites.some((f) => f.id === activeDiscover.id) : false;
   const ytResolving = useKaraoke((s) => s.ytResolving);
   const ytProbing = useKaraoke((s) => s.ytProbing);
+  const lyricsProvider = useKaraoke((s) => s.lyricsProvider);
   /* the preview badge only appears once the session is really preview-only */
   const showPreviewBadge = Boolean(
     activeDiscover && !ytActive && !ytResolving && !ytProbing && !directActive && !directResolving,
@@ -106,6 +107,11 @@ export function StudioScreen({ onOpenEditor }: { onOpenEditor: () => void }) {
             <span className="flex items-center gap-1 rounded-full bg-[var(--a-soft)] px-2 py-0.5 text-[10px] font-black text-[var(--a)]">
               <Sparkles size={10} aria-hidden />
               {t.synced}
+            </span>
+          )}
+          {lyricsProvider && (syncState === 'synced' || syncState === 'plain') && (
+            <span className="kv rounded-full border border-[var(--line2)] bg-[var(--panel2)] px-2 py-0.5 text-[9.5px] font-bold text-[var(--dim)]" title={`${t.lyricsProvider}: ${lyricsProvider}`}>
+              {lyricsProvider === 'netease' ? 'NETEASE' : 'LRCLIB'}
             </span>
           )}
           {syncState === 'syncing' && (

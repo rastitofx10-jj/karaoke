@@ -43,8 +43,10 @@ export interface PrepareResult {
   /** 0..1 alignment confidence. */
   confidence: number;
   match: { title: string; artist: string; album: string | null } | null;
-  /** mode=full only: the matched LRCLIB record's duration, seconds. */
+  /** mode=full only: the matched record's duration, seconds. */
   fullDurationSec?: number | null;
+  /** Which lyrics provider served the record — 'lrclib' (default) or 'netease'. */
+  provider?: string | null;
 }
 
 /** One full-song playback candidate resolved server-side from YouTube. */

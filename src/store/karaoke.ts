@@ -55,6 +55,9 @@ interface KaraokeState {
   hot: HotSong[];
   discoverBusyId: string | null;
   syncState: SyncState;
+  /** v3.5 — which lyrics provider served the live session's lyrics
+   * ('lrclib' | 'netease' | null), shown as a chip next to the synced badge */
+  lyricsProvider: string | null;
   recentSearches: string[];
   favorites: DiscoverSong[];
   /** the catalog song behind the current studio session (share/YT/preview) */
@@ -147,6 +150,7 @@ export const useKaraoke = create<KaraokeState>((set) => ({
   hot: [],
   discoverBusyId: null,
   syncState: 'idle',
+  lyricsProvider: null,
   recentSearches: [],
   favorites: [],
   activeDiscover: null,
