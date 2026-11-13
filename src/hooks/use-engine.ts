@@ -449,9 +449,15 @@ export function useKaraokeEngine() {
         const parsed: LrcSong = parseLyrics(raw, filename);
         const lines = withDerivedEnds(parsed.lines, e.duration);
         e.song.lyrics = lines;
+        /* plain lyrics ride along — a song without a synced timeline still
+         * gets its words on the stage as a static list */
+        e.song.plainLines =
+          lines.length === 0
+            ? parsed.lines.filter((l) => !(Number.isFinite(l.time) && l.time >= 0))
+            : [];
         e.song.lrcRaw = raw;
         const st = useKaraoke.getState();
-        st.patch({ song: st.song ? { ...st.song, hasLrc: lines.length > 0 } : null });
+        st.patch({ song: st.song ? { ...st.song, hasLrc: parsed.lines.length > 0 } : null });
         void dbReady().then(() => updateSong(e.song!.id, { lrc: raw }));
       } catch (err) {
         /* A bad LRC payload must never silently kill the studio session —
@@ -814,7 +820,12 @@ export function useKaraokeEngine() {
       try {
         const parsed: LrcSong = parseLyrics(raw, e.song.title);
         const dur = durationSec && durationSec > 0 ? durationSec : e.duration;
-        e.song.lyrics = withDerivedEnds(parsed.lines, dur);
+        const lines = withDerivedEnds(parsed.lines, dur);
+        e.song.lyrics = lines;
+        e.song.plainLines =
+          lines.length === 0
+            ? parsed.lines.filter((l) => !(Number.isFinite(l.time) && l.time >= 0))
+            : [];
         e.song.lrcRaw = raw;
         const st = useKaraoke.getState();
         st.patch({ song: st.song ? { ...st.song, hasLrc: parsed.lines.length > 0 } : null });

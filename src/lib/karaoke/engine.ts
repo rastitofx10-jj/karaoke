@@ -52,7 +52,11 @@ export interface LoadedSong {
   artist?: string;
   buffer: AudioBuffer;
   peaks: Float32Array;
+  /** synced (timestamped) lyric lines, sorted by time */
   lyrics: LrcLine[];
+  /** unsynced lyric lines — shown as a static scrollable list when no
+   * synced timeline exists (plain-text lyrics must never be a blank stage) */
+  plainLines?: LrcLine[];
   lrcRaw?: string;
   melody?: MelodyTrack;
 }
@@ -395,6 +399,11 @@ export class KaraokeEngine {
       ? parseLyrics(opts.lrcRaw, title)
       : { lines: [] };
     const lines = withDerivedEnds(parsed.lines, buffer.duration);
+    /* plain (unsynced) lyrics ride along when there is no synced timeline */
+    const plainLines =
+      lines.length === 0
+        ? parsed.lines.filter((l) => !(Number.isFinite(l.time) && l.time >= 0))
+        : [];
     const loaded: LoadedSong = {
       id,
       title,
@@ -402,6 +411,7 @@ export class KaraokeEngine {
       buffer,
       peaks: KaraokeEngine.computePeaks(buffer),
       lyrics: lines,
+      plainLines,
       lrcRaw: opts?.lrcRaw,
       melody: opts?.melody,
     };

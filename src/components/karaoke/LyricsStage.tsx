@@ -71,6 +71,12 @@ export function LyricsStage({ big = false }: { big?: boolean }) {
   const songLevel = useKaraoke((s) => s.songLevel);
 
   const lines = useMemo(() => getEngine().song?.lyrics ?? [], [song, duration]);
+  /* plain (unsynced) lyrics — shown as a static list when the song has no
+   * synced timeline. Never a blank stage: words beat timestamps. */
+  const plainLines = useMemo(
+    () => (lines.length === 0 ? getEngine().song?.plainLines ?? [] : []),
+    [lines, song, duration],
+  );
   const idx = lines.length ? activeLineIndex(lines, pos) : -1;
   const lastLine = lines.length ? lines[lines.length - 1] : null;
   const songOver = Boolean(
@@ -102,6 +108,26 @@ export function LyricsStage({ big = false }: { big?: boolean }) {
     );
   }
   if (!lines.length) {
+    /* plain (unsynced) lyrics — static scrollable list, still singable */
+    if (plainLines.length > 0) {
+      return (
+        <div className="disc-scroll flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto px-4 py-4" dir="auto">
+          <span className="kv sticky top-0 z-10 shrink-0 self-center rounded-full border border-[var(--line2)] bg-[var(--panel)] px-2.5 py-1 text-[9.5px] font-bold tracking-wide text-[var(--faint)] uppercase">
+            {t.plainListLabel}
+          </span>
+          {plainLines.map((l, i) => (
+            <div
+              key={i}
+              dir={detectDir(l.text)}
+              className="stage-line text-center text-[var(--dim)]"
+              style={{ fontSize: 'clamp(15px, 2.2vw, 24px)' }}
+            >
+              {l.text || '\u00A0'}
+            </div>
+          ))}
+        </div>
+      );
+    }
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
         <div className="text-lg font-bold text-[var(--dim)]">{t.noLyrics}</div>

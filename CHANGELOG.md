@@ -5,6 +5,13 @@
 The "29-second song is not a song" and "lyrics not in place" release. Every
 known way a full-song session could die or desync is now handled.
 
+### PLAIN LYRICS ARE STILL LYRICS
+- Songs whose LRCLIB record has only plain (unsynced) lyrics used to render a
+  **blank stage** — the synced-line pipeline dropped them. Now they ride along
+  as `plainLines` and the stage renders them as a static scrollable list with
+  an honest "unsynced — sing along" chip. Coverage win, especially for
+  Israeli music.
+
 ### THE LYRICS RACE (the real "not in place" bug)
 - **Root cause found**: the full-song LRC and the AI preview sync resolve at
   different speeds. When YouTube failed and the app fell back to the 30-second
