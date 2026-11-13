@@ -16,12 +16,13 @@ const azeretMono = Azeret_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "TITO KARAOKE STUDIO · אולפן קריוקי",
+  title: "TITO KARAOKE STUDIO v2.0 · אולפן קריוקי טיטו",
   description:
-    "אולפן קריוקי מקצועי בדפדפן: הסרת קולות חיה, שינוי מפתח, ליריקה מסונכרנת, ניקוד זמרים בזמן אמת, הקלטות ואפקטים. Professional browser karaoke studio: live vocal removal, key shift, synced lyrics, real-time singing score, recording and mic effects.",
+    "אולפן קריוקי מקצועי בדפדפן: חיפוש שירים מובנה ללא ייבוא קבצים, מילים מסונכרנות אוטומטית ב-AI, הסרת קולות חיה, שינוי מפתח, ניקוד זמרים בזמן אמת, הקלטות ואפקטים. Professional browser karaoke studio: built-in song search, AI-synced lyrics, live vocal removal, key shift, real-time singing score, recording and mic effects.",
   keywords: [
     "karaoke",
     "קריוקי",
+    "חיפוש שירים",
     "vocal remover",
     "pitch",
     "LRC",

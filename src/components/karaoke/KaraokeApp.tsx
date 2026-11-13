@@ -1,13 +1,13 @@
 'use client';
 
-/* TITO KARAOKE STUDIO v1.0 — the console layout.
- * Desktop: library | stage | mic+vocal. Mobile: tabs.
- * Stage mode: fullscreen lyrics overlay. Drag&drop import.
- * Keyboard: SPACE play · S scan · R rec · M mic · F stage · E editor.
+/* TITO KARAOKE STUDIO v2.0 — the console layout.
+ * Desktop: discover+library | stage | mic+vocal. Mobile: tabs (search first).
+ * Stage mode: fullscreen lyrics overlay. Drag&drop import still works.
+ * Keyboard: SPACE play · S scan · R rec · M mic · F stage · E editor · / search.
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { FileMusic, Keyboard, Library, Mic2, SlidersHorizontal, Theater, PencilLine, ListMusic } from 'lucide-react';
+import { FileMusic, Keyboard, Library, Mic2, Search, SlidersHorizontal, Theater, PencilLine, ListMusic } from 'lucide-react';
 import { useKaraoke } from '@/store/karaoke';
 import { useKaraokeEngine } from '@/hooks/use-engine';
 import { DICTS } from '@/lib/karaoke/i18n';
@@ -21,9 +21,10 @@ import { VocalEnginePanel, MelodyScanPanel } from './VocalEnginePanel';
 import { RecorderPanel, LibraryPanel, ResultsModal } from './RecorderPanel';
 import { LyricsEditor } from './LyricsEditor';
 import { SpectrumCanvas } from './SpectrumCanvas';
+import { DiscoverPanel } from './DiscoverPanel';
 import { Chip } from './controls';
 
-type MobileTab = 'stage' | 'mic' | 'library' | 'rec';
+type MobileTab = 'search' | 'stage' | 'mic' | 'library' | 'rec';
 
 export function KaraokeApp() {
   const actions = useKaraokeEngine();
@@ -34,7 +35,7 @@ export function KaraokeApp() {
   const song = useKaraoke((s) => s.song);
   const recording = useKaraoke((s) => s.recording);
   const micActive = useKaraoke((s) => s.micActive);
-  const [tab, setTab] = useState<MobileTab>('stage');
+  const [tab, setTab] = useState<MobileTab>('search');
   const [editorOpen, setEditorOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const dropRef = useRef<HTMLDivElement>(null);
@@ -104,6 +105,7 @@ export function KaraokeApp() {
   }, []);
 
   const tabs: Array<{ id: MobileTab; label: string; icon: React.ReactNode }> = [
+    { id: 'search', label: t.searchTab, icon: <Search size={15} /> },
     { id: 'stage', label: t.lyrics, icon: <Theater size={15} /> },
     { id: 'mic', label: t.mic, icon: <Mic2 size={15} /> },
     { id: 'library', label: t.library, icon: <Library size={15} /> },
@@ -145,9 +147,10 @@ export function KaraokeApp() {
           </div>
 
           {/* desktop 3-column grid */}
-          <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[300px_minmax(0,1fr)_320px]">
-            {/* left — library + scan */}
-            <div className="hidden min-h-0 flex-col gap-3 lg:flex">
+          <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[320px_minmax(0,1fr)_320px]">
+            {/* left — discover + library + scan */}
+            <div className="disc-scroll hidden min-h-0 flex-col gap-3 overflow-y-auto pe-0.5 lg:flex">
+              <DiscoverPanel />
               <MelodyScanPanel />
               <LibraryPanel />
             </div>
@@ -170,6 +173,7 @@ export function KaraokeApp() {
 
           {/* mobile tabs content */}
           <div className="lg:hidden">
+            {tab === 'search' && <DiscoverPanel />}
             {tab === 'library' && (
               <div className="flex flex-col gap-3">
                 <MelodyScanPanel />

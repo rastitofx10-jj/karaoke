@@ -7,7 +7,7 @@ export type Lang = 'he' | 'en';
 const he = {
   /* brand + top bar */
   brand: 'אולפן קריוקי טיטו',
-  version: 'גרסה 1.0 · THE STAGE',
+  version: 'גרסה 2.0 · DISCOVER ENGINE',
   power: 'הדלקה',
   powerOn: 'לחץ להדלקת הקונסולה',
   on: 'פעיל',
@@ -151,19 +151,39 @@ const he = {
   load: 'טעינה',
   searchSong: 'חיפוש שיר…',
 
+  /* discover */
+  discover: 'גילוי שירים',
+  searchTab: 'חיפוש',
+  searchPlaceholder: 'חפשו שיר, אמן או אלבום…',
+  searching: 'מחפש…',
+  noResults: 'לא נמצאו שירים — נסו איות אחר',
+  typeMore: 'הקלידו שני תווים ומעלה כדי לחפש בקטלוג',
+  trending: 'להיטים עכשיו',
+  hotInApp: 'חם אצלנו',
+  recentSearches: 'חיפושים אחרונים',
+  hasLyrics: 'מילים',
+  playCount: 'השמעות',
+  syncAI: 'סנכרון AI',
+  syncingLyrics: 'מסנכרן מילים עם AI…',
+  syncDone: 'מילים מסונכרנו — אפשר לשיר!',
+  syncPlain: 'מילים נטענו (לא מסונכרנות)',
+  syncNone: 'לא נמצאו מילים לשיר הזה',
+  previewNote: 'קטעי טעימה של 30 שנ׳ · מילים מסונכרנות אוטומטית',
+  networkError: 'שגיאת רשת — נסו שוב',
+
   /* misc */
   close: 'סגירה',
   error: 'שגיאה',
   ok: 'אישור',
   dropAudio: 'קובץ אודיו זוהה',
   footer: 'אולפן קריוקי טיטו · הנדסה לאחור, נבנה מחדש ברמה גבוהה יותר · הכל רץ בדפדפן שלכם',
-  shortcuts: 'רווח נגן/השהה · S סרוק · R הקלט · M מיקרופון · F במה מלאה',
+  shortcuts: 'רווח נגן/השהה · S סרוק · R הקלט · M מיקרופון · F במה · / חיפוש',
 };
 
 export type Dict = typeof he;
 const en: Dict = {
   brand: 'TITO KARAOKE STUDIO',
-  version: 'v1.0 · THE STAGE',
+  version: 'v2.0 · DISCOVER ENGINE',
   power: 'POWER',
   powerOn: 'Click to power the console',
   on: 'ON',
@@ -299,12 +319,32 @@ const en: Dict = {
   load: 'Load',
   searchSong: 'Search songs…',
 
+  /* discover */
+  discover: 'SONG DISCOVER',
+  searchTab: 'Search',
+  searchPlaceholder: 'Search songs, artists, albums…',
+  searching: 'Searching…',
+  noResults: 'No songs found — try another spelling',
+  typeMore: 'Type two or more characters to search the catalog',
+  trending: 'Trending now',
+  hotInApp: 'Hot in the app',
+  recentSearches: 'Recent searches',
+  hasLyrics: 'Lyrics',
+  playCount: 'plays',
+  syncAI: 'AI sync',
+  syncingLyrics: 'AI-syncing lyrics…',
+  syncDone: 'Lyrics synced — sing along!',
+  syncPlain: 'Lyrics loaded (unsynced)',
+  syncNone: 'No lyrics found for this song',
+  previewNote: '30-second preview clips · lyrics auto-synced',
+  networkError: 'Network error — try again',
+
   close: 'Close',
   error: 'Error',
   ok: 'OK',
   dropAudio: 'Audio file detected',
   footer: 'TITO KARAOKE STUDIO · reverse-engineered and rebuilt one level up · everything runs in your browser',
-  shortcuts: 'SPACE play/pause · S scan · R record · M mic · F stage',
+  shortcuts: 'SPACE play/pause · S scan · R record · M mic · F stage · / search',
 };
 
 export const DICTS: Record<Lang, Dict> = { he, en };

@@ -1,7 +1,10 @@
 'use client';
 
-/* TITO KARAOKE STUDIO v1.0 — React binding for the audio engine.
+/* TITO KARAOKE STUDIO v2.0 — React binding for the audio engine.
  * One engine instance, one rAF loop feeding the store, typed actions.
+ * v2.0 adds the DISCOVER actions: instant song search (iTunes catalog via
+ * /api/discover/*), streaming preview clips into the engine, and AI-synced
+ * lyrics (LRCLIB + ASR preview alignment) attached as plain LRC.
  */
 
 import { useEffect, useRef } from 'react';
@@ -16,6 +19,7 @@ import {
 import { useKaraoke } from '@/store/karaoke';
 import { DICTS } from '@/lib/karaoke/i18n';
 import type { LrcSong, RankKey, ScoreResult, TakeMeta, VocalMode } from '@/lib/karaoke/types';
+import type { DiscoverSong, HotSong, PrepareResult } from '@/lib/karaoke/discover-types';
 
 let engine: KaraokeEngine | null = null;
 export function getEngine(): KaraokeEngine {
@@ -37,6 +41,39 @@ if (typeof window !== 'undefined') {
 
 const lang = () => useKaraoke.getState().lang;
 const t = () => DICTS[lang()];
+
+/* ---------- discover helpers (module level, browser only) ---------- */
+
+/** Download an official preview clip through our same-origin proxy. */
+async function fetchAudioFile(song: DiscoverSong): Promise<File> {
+  const res = await fetch(`/api/discover/audio?preview=${encodeURIComponent(song.previewUrl)}`);
+  if (!res.ok) throw new Error('audio download failed');
+  const type = res.headers.get('content-type') ?? 'audio/mp4';
+  const buf = await res.arrayBuffer();
+  const safeName = `${song.artist} - ${song.title}`.replace(/[\\/:*?"<>|]+/g, ' ').slice(0, 80).trim();
+  return new File([buf], `${safeName || 'song'}.m4a`, {
+    type: type.startsWith('audio') ? type : 'audio/mp4',
+  });
+}
+
+/** Lyrics + AI preview offset for a catalog song (never throws). */
+async function fetchPrepare(song: DiscoverSong): Promise<PrepareResult | null> {
+  try {
+    const qs = new URLSearchParams({
+      trackId: String(song.trackId),
+      artist: song.artist,
+      title: song.title,
+      album: song.album,
+      durationMs: String(song.durationMs),
+      preview: song.previewUrl,
+    });
+    const res = await fetch(`/api/discover/prepare?${qs.toString()}`);
+    if (!res.ok) return null;
+    return (await res.json()) as PrepareResult;
+  } catch {
+    return null;
+  }
+}
 
 export function useKaraokeEngine() {
   const rafRef = useRef<number>(0);
@@ -111,7 +148,7 @@ export function useKaraokeEngine() {
     async loadAudioFile(file: File) {
       const st = useKaraoke.getState();
       if (!st.powered) await this.powerOn();
-      st.patch({ loadingFile: true });
+      st.patch({ loadingFile: true, syncState: 'idle' });
       try {
         const data = await file.arrayBuffer();
         const buffer = await decodeAudioData(data);
@@ -157,6 +194,7 @@ export function useKaraokeEngine() {
       const rec = await getSong(id);
       if (!rec) return;
       try {
+        useKaraoke.getState().patch({ syncState: 'idle' });
         const data = await rec.audio.arrayBuffer();
         const buffer = await decodeAudioData(data);
         const e = getEngine();
@@ -411,6 +449,197 @@ export function useKaraokeEngine() {
       a.download = `take-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.wav`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 5000);
+    },
+
+    /* --------------------------- discover ---------------------------- */
+
+    /** Debounced catalog search — the panel owns the debounce, this fires. */
+    async searchDiscover(q: string) {
+      const trimmed = q.trim();
+      const st = useKaraoke.getState();
+      if (trimmed.length < 2) {
+        st.patch({ discoverResults: [], discoverLoading: false });
+        return;
+      }
+      st.patch({ discoverLoading: true, discoverError: null });
+      try {
+        const res = await fetch(`/api/discover/search?q=${encodeURIComponent(trimmed)}&lang=${lang()}`);
+        if (!res.ok) throw new Error('http');
+        const data = (await res.json()) as { songs: DiscoverSong[] };
+        const cur = useKaraoke.getState();
+        if (cur.discoverQuery.trim() !== trimmed) return; // stale response
+        cur.patch({ discoverResults: data.songs ?? [], discoverLoading: false, discoverError: null });
+        if ((data.songs ?? []).length > 0) {
+          const recents = [trimmed, ...cur.recentSearches.filter((r) => r !== trimmed)].slice(0, 6);
+          cur.patch({ recentSearches: recents });
+          setSetting('recentSearches', recents);
+        }
+      } catch {
+        const cur = useKaraoke.getState();
+        if (cur.discoverQuery.trim() === trimmed) {
+          cur.patch({ discoverLoading: false, discoverError: 'network' });
+        }
+      }
+    },
+
+    loadRecentSearches() {
+      const r = getSetting<string[]>('recentSearches', []);
+      useKaraoke.getState().patch({ recentSearches: Array.isArray(r) ? r.slice(0, 6) : [] });
+    },
+
+    async loadTrending() {
+      try {
+        const res = await fetch(`/api/discover/charts?lang=${lang()}`);
+        const data = (await res.json()) as { songs: DiscoverSong[] };
+        useKaraoke.getState().patch({ trending: Array.isArray(data.songs) ? data.songs : [] });
+      } catch {
+        /* silent — trending is a bonus */
+      }
+    },
+
+    async loadHot() {
+      try {
+        const res = await fetch('/api/discover/plays');
+        const data = (await res.json()) as { songs: HotSong[] };
+        useKaraoke.getState().patch({ hot: Array.isArray(data.songs) ? data.songs.slice(0, 6) : [] });
+      } catch {
+        /* silent */
+      }
+    },
+
+    async logPlay(song: DiscoverSong) {
+      try {
+        await fetch('/api/discover/plays', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(song),
+        });
+      } catch {
+        /* silent — counters never break playback */
+      }
+    },
+
+    /**
+     * The golden path: stream a catalog song into the engine.
+     * Library fast-path (instant + offline) → cold download; audio starts
+     * as soon as it's decoded, AI-synced lyrics attach when ready.
+     */
+    async loadDiscoverSong(song: DiscoverSong) {
+      const st0 = useKaraoke.getState();
+      if (!st0.powered) await this.powerOn();
+      const id = `itunes:${song.trackId}`;
+      if (useKaraoke.getState().discoverBusyId === song.id) return;
+      useKaraoke.getState().patch({
+        discoverBusyId: song.id,
+        loadingFile: true,
+        syncState: 'syncing',
+        resultsOpen: false,
+      });
+
+      const applyLyrics = (prep: PrepareResult | null): void => {
+        const eng = getEngine();
+        if (!eng.song || eng.song.id !== id) return; // user switched songs meanwhile
+        const st = useKaraoke.getState();
+        if (prep?.lrc) {
+          this.setLyricsRaw(prep.lrc); // updates store hasLrc + persists to library
+          st.patch({ syncState: 'synced' });
+          toast.success(t().syncDone, { description: `${song.artist} · ${song.title}` });
+        } else if (prep?.plainLyrics) {
+          this.setLyricsRaw(prep.plainLyrics);
+          st.patch({ syncState: 'plain' });
+          toast.info(t().syncPlain, { description: `${song.artist} · ${song.title}` });
+        } else {
+          st.patch({ syncState: 'none' });
+          toast.warning(t().syncNone, { description: `${song.artist} · ${song.title}` });
+        }
+      };
+
+      try {
+        // 1. library fast-path — instant, works offline
+        const existing = await dbReady().then(() => getSong(id)).catch(() => null);
+        if (existing) {
+          await this.loadFromLibrary(id);
+          useKaraoke.getState().patch({ discoverBusyId: null, loadingFile: false });
+          void getEngine().play();
+          void this.logPlay(song);
+          if (existing.lrc) {
+            useKaraoke.getState().patch({ syncState: 'synced' });
+            toast.success(t().syncDone, { description: `${song.artist} · ${song.title}` });
+            return;
+          }
+          applyLyrics(await fetchPrepare(song));
+          return;
+        }
+
+        // 2. cold path — download + decode, prepare lyrics in parallel
+        const file = await fetchAudioFile(song);
+        const prepPromise = fetchPrepare(song);
+        const data = await file.arrayBuffer();
+        const buffer = await decodeAudioData(data);
+        const e = getEngine();
+        const loaded = e.loadSong(id, song.title, buffer, { artist: song.artist });
+        useKaraoke.getState().patch({
+          song: {
+            id,
+            title: song.title,
+            artist: song.artist,
+            durationSec: buffer.duration,
+            hasLrc: false,
+            hasMelody: false,
+          },
+          duration: buffer.duration,
+          pos: 0,
+          loadingFile: false,
+          lastTake: null,
+          peaks: loaded.peaks,
+          discoverBusyId: null,
+          syncState: 'syncing',
+        });
+        await dbReady();
+        const saved = await saveSong({
+          id,
+          title: song.title,
+          artist: song.artist,
+          createdAt: Date.now(),
+          durationSec: buffer.duration,
+          hasLrc: false,
+          hasMelody: false,
+          sizeBytes: file.size,
+          audio: file,
+        });
+        if (saved) actions.refreshLibrary();
+        void e.play();
+        void this.logPlay(song);
+
+        // lyrics arrive while the song is already playing
+        applyLyrics(await prepPromise);
+      } catch {
+        useKaraoke.getState().patch({
+          discoverBusyId: null,
+          loadingFile: false,
+          syncState: 'none',
+        });
+        toast.error(t().error, { description: t().networkError });
+      }
+    },
+
+    /** Live lyric sync adjustment (seconds) for the loaded song. */
+    nudgeSync(delta: number) {
+      const e = getEngine();
+      if (!e.song || e.song.lyrics.length === 0) return;
+      const shift = (x: number) => Math.max(0, x + delta);
+      const lines = e.song.lyrics.map((l) => ({
+        ...l,
+        time: shift(l.time),
+        end: l.end != null ? l.end + delta : undefined,
+        words: Array.isArray(l.words)
+          ? l.words.map((w) => ({ ...w, t: shift(w.t), end: w.end != null ? w.end + delta : undefined }))
+          : undefined,
+      }));
+      const raw = serializeLrc({ title: e.song.title, artist: e.song.artist, lines });
+      e.song.lyrics = lines;
+      e.song.lrcRaw = raw;
+      void dbReady().then(() => updateSong(e.song!.id, { lrc: raw }));
     },
 
     loadPersistedState() {

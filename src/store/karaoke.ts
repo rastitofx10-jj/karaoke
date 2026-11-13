@@ -9,6 +9,10 @@ import { create } from 'zustand';
 import type { MicFx, RankKey, ScoreResult, SongMeta, TakeMeta, VocalMode } from '@/lib/karaoke/types';
 import { MIC_FX_DEFAULT } from '@/lib/karaoke/types';
 import type { Lang } from '@/lib/karaoke/i18n';
+import type { DiscoverSong, HotSong } from '@/lib/karaoke/discover-types';
+
+/** Lifecycle of the AI lyric sync for the current song. */
+export type SyncState = 'idle' | 'syncing' | 'synced' | 'plain' | 'none';
 
 export interface UiSong {
   id: string;
@@ -38,6 +42,17 @@ interface KaraokeState {
   liveScore: ScoreResult | null;
   recording: boolean;
   recSec: number;
+
+  /* discover (search & streaming) */
+  discoverQuery: string;
+  discoverResults: DiscoverSong[];
+  discoverLoading: boolean;
+  discoverError: string | null;
+  trending: DiscoverSong[];
+  hot: HotSong[];
+  discoverBusyId: string | null;
+  syncState: SyncState;
+  recentSearches: string[];
 
   /* song */
   song: UiSong | null;
@@ -91,6 +106,17 @@ export const useKaraoke = create<KaraokeState>((set) => ({
   liveScore: null,
   recording: false,
   recSec: 0,
+
+  /* discover (search & streaming) */
+  discoverQuery: '',
+  discoverResults: [],
+  discoverLoading: false,
+  discoverError: null,
+  trending: [],
+  hot: [],
+  discoverBusyId: null,
+  syncState: 'idle',
+  recentSearches: [],
 
   song: null,
   loadingFile: false,
