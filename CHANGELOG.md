@@ -1,5 +1,80 @@
 # TITO KARAOKE STUDIO — Changelog
 
+## 3.4 — FULL SONGS, VERIFIED IN THE BROWSER (2026-11-14)
+
+The "find other solutions, use the hunter" release. Field evidence (browser
+probes with real iframe players) exposed the true failure chain behind the
+29-second fallback, and this release fixes playback at every tier with
+evidence-backed engineering.
+
+### WHAT THE EVIDENCE SHOWED
+- **oEmbed lies**: the v3.2 server-side embeddability filter returned
+  "embeddable" (HTTP 200) for videos the iframe player then rejects with
+  error 150. The resolver was shipping dead sources to the client on every
+  resolve. The filter is **removed**.
+- **Embed-blocked ≠ rare**: in a datacenter environment the iframe player
+  150s most uploads (official videos, lyric channels, even karaoke-channel
+  tracks), silently or in ~1s. The old cascade burned its whole stall
+  budget on sources that could never play.
+- **Embeds that work, work instantly**: verified end-to-end — a muted
+  iframe reaches PLAYING with the clock advancing in ~1s; blocked sources
+  fire onError=150 in ~1-2s. The browser is the only ground truth.
+
+### THE PROBE GATE (v3.3 core)
+- Every server-ranked candidate (up to 12, was 8) is now mounted as a tiny
+  **muted iframe** and played in parallel — **in waves of 6**, so all ranked
+  sources get their chance. The first source whose clock actually moves
+  (PLAYING + `getCurrentTime > 0.05`) is promoted to the live session; a
+  source claiming PLAYING at a frozen 0 (bot wall fingerprint) never
+  passes. A whole wave dying launches the next wave; the gate fails only
+  when every candidate is dead.
+- The live session **starts muted** (autoplay-policy safe): the clock, the
+  lyrics and the mic pipeline run from the first second, and one tap on
+  the **"tap to turn the sound on"** overlay (the user gesture the browser
+  demands) unmutes at full volume.
+- Probing a working source resets the environment stall brake; per-video
+  errors never do.
+
+### THE DIRECT-AUDIO TIER (v3.4 core — the "other solution")
+- A second, independent full-song engine: the server resolves a direct,
+  cipher-free audio stream via the **visionos innertube client** (the one
+  recipe verified from this machine to return playable googlevideo URLs),
+  picks itag 140 (m4a AAC) with Opus fallbacks, and **proxies the bytes**
+  with Range passthrough (`/api/discover/stream`) — googlevideo URLs are
+  IP-locked, so the browser must fetch through us.
+- The client downloads the track (32MB ceiling), decodes it into Web
+  Audio and loads it as the engine's song — which means the **entire
+  karaoke machine now runs on the full song**: live vocal removal, vocal
+  isolation, key shift, speed, melody scan, pitch scoring, A-B loop and
+  recording, none of which can process iframe audio.
+- The tier fires wherever the iframe tier failed: all probe waves dead,
+  a mid-session cascade, or a manually pasted link that cannot embed —
+  each gets the direct attempt before any fallback. Server-side walls are
+  cached 30min, resolved sources 4h.
+
+### THE LYRICS RACES (fixed at the state machine)
+- `applyPrepare` now treats **probing as full**: a full-song LRC that
+  lands while the probe gate is still deciding used to be dropped
+  (ytActive was false) — under the gate that meant "no lyrics at all".
+  Now full-timeline lyrics attach during probing, during the iframe
+  session, and on the direct-audio song, and every stale timeline (clip
+  words on a full song, full timestamps on a 30s clip) is dropped.
+- `attachFullLyrics` serves all three tiers; `retryLyrics` re-attaches on
+  the real song id (`yt:<id>` in direct mode — the preview shell is no
+  longer clobbered over a full song).
+
+### EVIDENCE (fable-evidence-done discipline, from the hunter DNA)
+- Rick Astley full song via iframe: `0:20 / 3:33`, first line highlighted
+  in place, word-level fill visible, no errors (browser-verified).
+- Queen: 12 candidates probed in 2 waves (~2s), all error 150 → 5 direct
+  probes → honest preview + clip-synced lyrics, `0 dead iframes` left in
+  the DOM.
+- Hebrew (אבי הטחול): preview + plain-lyrics static list — LRCLIB has no
+  synced LRC for it; the stage never sits empty.
+- Manual paste of a walled link: iframe 150 → direct attempt → honest
+  fallback, zero page errors.
+- Stage mode, desktop and 390px mobile layouts verified clean.
+
 ## 3.2 — FULL SONGS, BULLETPROOF (2026-11-13)
 
 The "29-second song is not a song" and "lyrics not in place" release. Every

@@ -30,6 +30,8 @@ export function StudioScreen({ onOpenEditor }: { onOpenEditor: () => void }) {
   const activeDiscover = useKaraoke((s) => s.activeDiscover);
   const syncState = useKaraoke((s) => s.syncState);
   const ytActive = useKaraoke((s) => s.ytActive);
+  const directActive = useKaraoke((s) => s.directActive);
+  const directResolving = useKaraoke((s) => s.directResolving);
   const micActive = useKaraoke((s) => s.micActive);
   const recording = useKaraoke((s) => s.recording);
   const liveScore = useKaraoke((s) => s.liveScore);
@@ -37,8 +39,11 @@ export function StudioScreen({ onOpenEditor }: { onOpenEditor: () => void }) {
 
   const isFav = activeDiscover ? favorites.some((f) => f.id === activeDiscover.id) : false;
   const ytResolving = useKaraoke((s) => s.ytResolving);
+  const ytProbing = useKaraoke((s) => s.ytProbing);
   /* the preview badge only appears once the session is really preview-only */
-  const showPreviewBadge = Boolean(activeDiscover && !ytActive && !ytResolving);
+  const showPreviewBadge = Boolean(
+    activeDiscover && !ytActive && !ytResolving && !ytProbing && !directActive && !directResolving,
+  );
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
@@ -84,6 +89,11 @@ export function StudioScreen({ onOpenEditor }: { onOpenEditor: () => void }) {
           {ytActive && (
             <span className="kv rounded-full border border-[color-mix(in_srgb,var(--b)_50%,transparent)] bg-[var(--b-soft)] px-2 py-0.5 text-[10px] font-bold text-[var(--b)]">
               {t.fullSong}
+            </span>
+          )}
+          {directActive && (
+            <span className="kv rounded-full border border-[color-mix(in_srgb,var(--b)_50%,transparent)] bg-[var(--b-soft)] px-2 py-0.5 text-[10px] font-bold text-[var(--b)]">
+              {t.directLive}
             </span>
           )}
           {ytResolving && !ytActive && (

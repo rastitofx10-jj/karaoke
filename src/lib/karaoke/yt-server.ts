@@ -10,12 +10,16 @@
  *
  * v3.2 hardening — sources that CANNOT play are cut before the client ever
  * mounts them:
- *   • oEmbed embeddability probe (101/150 embed-disabled videos are the #1
- *     full-song killer in the wild — official music videos are often
- *     blocked; karaoke/lyric channels are not)
  *   • variant=karaoke — the same resolver, re-tuned for instrumental /
  *     karaoke backing tracks (the true karaoke machine mode)
  *   • fresh=1 — user-driven retries bypass the (empty-result) cache
+ *
+ * v3.3 — the oEmbed embeddability probe was REMOVED: field evidence showed
+ * it returns 200 for videos the iframe player then rejects with error 150
+ * ("embedding disabled"), i.e. it detects nothing. Embeddability is now
+ * verified by the BROWSER (the only ground truth) — the client probe gate
+ * mounts muted parallel iframes and keeps only sources that actually start
+ * playing, so the server ships a wider ranked list (up to 12) instead.
  *
  * Every exported function is total: any network/parse failure degrades to
  * []. Results (including empty ones) are cached in memory and de-duplicated
@@ -174,56 +178,6 @@ function collectVideos(node: unknown, out: Map<string, RawVideo>): void {
 }
 
 /* ------------------------------------------------------------------ */
-/* oEmbed embeddability probe                                          */
-/* ------------------------------------------------------------------ */
-
-/* 200 → embeddable · 401/403 → embedding disabled by the owner · 404 →
- * gone · anything else / network error → unknown (null — keep the video,
- * the client cascade still handles late failures). Probes are cached 24h. */
-const OEMBED_TTL_MS = 24 * 60 * 60 * 1000;
-
-async function probeEmbeddable(videoId: string): Promise<boolean | null> {
-  const key = `yt:oembed:${videoId}`;
-  const cached = memGet<boolean>(key);
-  if (cached !== null) return cached;
-  try {
-    const url =
-      'https://www.youtube.com/oembed?format=json&url=' +
-      encodeURIComponent(`https://www.youtube.com/watch?v=${videoId}`);
-    const res = await fetch(url, {
-      headers: { 'User-Agent': YT_UA, Accept: 'application/json' },
-      signal: AbortSignal.timeout(5000),
-      cache: 'no-store',
-    });
-    if (res.ok) {
-      memSet(key, true, OEMBED_TTL_MS);
-      return true;
-    }
-    if (res.status === 401 || res.status === 403 || res.status === 404) {
-      memSet(key, false, OEMBED_TTL_MS);
-      return false;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-/** Drop hard-embed-blocked videos before they reach the client. If the
- * oEmbed endpoint itself is unreachable (every probe = null) the list is
- * returned untouched — never punish the user for a probe outage. */
-async function filterEmbeddable(cands: YtCandidate[]): Promise<YtCandidate[]> {
-  if (cands.length === 0) return [];
-  const top = cands.slice(0, 10);
-  const verdicts = await Promise.all(top.map((c) => probeEmbeddable(c.videoId)));
-  if (verdicts.every((v) => v === null)) return cands.slice(0, 8);
-  const kept = top.filter((_, i) => verdicts[i] !== false);
-  /* a fully-blocked top-10 honestly returns [] — the client falls back to
-   * the preview instantly instead of burning ~30s cascading dead sources */
-  return kept.slice(0, 8);
-}
-
-/* ------------------------------------------------------------------ */
 /* filtering + scoring                                                 */
 /* ------------------------------------------------------------------ */
 
@@ -306,7 +260,7 @@ function scoreCandidates(
 }
 
 /* ------------------------------------------------------------------ */
-/* resolution pipeline (cached + deduped + embeddability-filtered)      */
+/* resolution pipeline (cached + deduped)                              */
 /* ------------------------------------------------------------------ */
 
 /* found results stick 6h; EMPTY results stick only 10 minutes so a
@@ -382,10 +336,13 @@ export async function resolveYtCandidates(input: YtResolveInput): Promise<YtCand
     }
 
     return await dedupe(key, async () => {
+      /* v3.3: no server-side embeddability filter — the browser probe gate
+       * is the only reliable verifier (evidence: oEmbed says 200 for videos
+       * the iframe rejects with 150). Ship the ranked list, let the gate
+       * pick the first source that actually plays. */
       const scored = await searchCandidates(title, artist, ms / 1000, variant);
-      const filtered = await filterEmbeddable(scored);
-      memSet(key, filtered, filtered.length > 0 ? CACHE_TTL_MS : CACHE_TTL_EMPTY_MS);
-      return filtered;
+      memSet(key, scored, scored.length > 0 ? CACHE_TTL_MS : CACHE_TTL_EMPTY_MS);
+      return scored;
     });
   } catch {
     return [];

@@ -1,18 +1,20 @@
-# TITO KARAOKE STUDIO · v3.2 — FULL SONGS
+# TITO KARAOKE STUDIO · v3.4 — FULL SONGS, VERIFIED
 
-**אולפן קריוקי מקצועי שלם, בדפדפן. חיפוש שיר → שיר מלא → מילים מסונכרנות → שירה.**
-A complete professional karaoke studio that runs entirely in the browser. Search a song, get the **full song** with **time-synced lyrics**, and sing — every sample, every pitch, every score computed on your machine.
+**אולפן קריוקי מקצועי שלם, בדפדפן. חיפוש שיר → שיר מלא שמאומת בפועל → מילים מסונכרנות → שירה.**
+A complete professional karaoke studio that runs entirely in the browser. Search a song, get the **full song** — verified to actually play before it ever reaches your ears — with **time-synced lyrics**, and sing. Every sample, every pitch, every score computed on your machine.
 
 ---
 
-## THE GOLDEN PATH (v3.2 — bulletproof)
+## THE GOLDEN PATH (v3.4 — evidence-backed, tiered)
 
 1. **Search** — the iTunes catalog (millions of songs, official artwork + metadata) plus live local charts.
-2. **Full song, automatically** — the server ranks full-length YouTube sources for the song you picked, drops every embed-blocked source up front (oEmbed probe), and the session starts the moment you click a song. No source survives? A cascade tries the next one; the environment blocks them all? An honest 30-second preview keeps the stage alive with a one-click **"try the full song again"**.
-3. **Lyrics in place** — LRCLIB synced lyrics on the song's original timeline, so they line up with the full song exactly. Karaoke (`instrumental`) uploads with intro drift? **±0.25 s calibration** buttons.
-4. **Original ⇄ Karaoke version** — one toggle re-resolves the backing track to instrumental karaoke uploads (no lead vocals) — a true karaoke machine when the upload exists.
-5. **Autoplay-blocked? Tap to start** — the app shows a big tap button instead of a silent black rectangle; after one failed tap it gets out of the way and lets you press YouTube's own play button.
-6. Sing — mic console, vocal engine, live pitch, scoring, recording. Everything below still applies.
+2. **The probe gate** — the server ranks up to 12 full-length YouTube sources; the browser then mounts tiny **muted probe players in parallel waves** and keeps only a source whose clock actually moves. A source that plays silently/bot-walled never passes; a source that plays is promoted instantly. This is the only reliable embeddability check in existence — server-side probes (oEmbed etc.) return "embeddable" for videos the player then rejects with error 150.
+3. **Tap-for-sound** — the promoted session starts muted (autoplay-policy safe), so the clock, lyrics and mic run from the first second; one tap on the overlay turns the sound on.
+4. **The direct-audio tier** — if the iframe route is blocked (embed-disabled or datacenter walls), the server itself resolves a direct audio stream (visionos innertube client — cipher-free googlevideo URLs) and **proxies the bytes**. The track is decoded into Web Audio, which unlocks the **whole karaoke machine on the full song**: vocal removal, singer isolation, key shift, speed, melody scan, scoring, A-B loop, recording — none of which can process iframe audio.
+5. **Lyrics in place** — LRCLIB synced lyrics on the song's original timeline across all three tiers; every stale timeline is dropped at the state machine (clip words can never land on a full song and vice versa). **±0.25 s calibration** for intro drift.
+6. **Original ⇄ Karaoke version** — one toggle re-resolves the backing track to instrumental karaoke uploads (no lead vocals).
+7. **Honest fallback** — both tiers blocked? A clear 30-second-preview notice with a **"try the full song again"** door, clip-synced lyrics, and a manual-paste field that itself falls back through the direct tier. The stage never sits silent, never lies, never surprises you with a 29-second song pretending to be a song.
+8. Sing — mic console, vocal engine, live pitch, scoring, recording. Everything below still applies.
 
 ---
 
@@ -72,10 +74,11 @@ src/lib/karaoke/
   engine.ts       the Web Audio graph — one class owns everything
   worklets.ts     AudioWorklet sources (pitch-shift, recorder)
   yt.ts           YouTube IFrame bridge + stall-failure telemetry
-  yt-server.ts    full-song resolver: search scrape → scoring → oEmbed probe
+  yt-server.ts    full-song resolver: search scrape → scoring (12 candidates)
+  yt-audio-server.ts  direct-audio tier: visionos innertube resolve + byte proxy
   discover-server.ts  iTunes search/charts + LRCLIB + AI preview sync (ASR)
   i18n.ts         HE/EN dictionary
-src/app/api/discover/  search · charts · prepare (lyrics) · youtube · audio · plays
+src/app/api/discover/  search · charts · prepare (lyrics) · youtube · audio · plays · stream (proxy)
 src/components/karaoke/   the console UI
 src/hooks/use-engine.ts   React binding + actions (rAF heartbeat, golden path)
 src/store/karaoke.ts      zustand store
@@ -83,10 +86,11 @@ src/store/karaoke.ts      zustand store
 
 ## HONEST EDGES
 
-- Full-length playback comes from YouTube embeds. If a network (or YouTube's bot wall) blocks embeds for you, the app tells you so, keeps the honest 30-second preview running and offers **"try the full song again"** plus a manual link paste.
-- Vocal removal is the classic center-cancel trick — great on 90% of pop/rock mixes, weak on hard-panned or heavily doubled vocals. That's physics, not a bug. (On full-song YouTube playback the vocal engine applies to the 30 s preview shell only.)
+- Full-length playback is tiered: **iframe probe gate** (verified in your browser) → **direct-audio tier** (server-resolved, decoded into the engine so every DSP feature runs on the full song) → **honest 30-second preview** with clip-synced lyrics and a one-click retry. The app tells you which tier you're on and never pretends a 29-second clip is a song.
+- On iframe (YouTube-embed) playback the vocal engine has no access to the music track — that's Web Audio security, not a bug. The direct-audio tier exists precisely to unlock vocal removal, key shift and speed on full songs; the preview shell always has them.
+- Vocal removal is the classic center-cancel trick — great on 90% of pop/rock mixes, weak on hard-panned or heavily doubled vocals. That's physics, not a bug.
 - Melody scan quality depends on the lead vocal sitting in the center. Wide-stereo acapellas will scan noisily.
-- Lyric coverage follows LRCLIB — most popular songs (HE and EN both) have synced lyrics; when a song doesn't, the app says so and offers a retry + the tap-to-sync editor.
+- Lyric coverage follows LRCLIB — most popular songs (HE and EN both) have synced lyrics; when a song doesn't, the app says so, falls back to plain lyrics as a static sing-along list, and offers a retry + the tap-to-sync editor.
 - Speaker monitoring without headphones = feedback loop. The app marks it red for a reason.
 - Chrome/Edge/Firefox only (AudioWorklet). Safari mostly works, untested.
 

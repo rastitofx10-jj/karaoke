@@ -73,6 +73,16 @@ interface KaraokeState {
   ytVariant: 'original' | 'karaoke';
   /** True while /api/discover/youtube is resolving full-song sources. */
   ytResolving: boolean;
+  /** v3.3 — true while the browser probe gate verifies candidates (muted
+   *  parallel iframes) before one is promoted to the live session. */
+  ytProbing: boolean;
+
+  /* v3.4 — direct-audio full-song tier (server-resolved + proxied,
+   * decoded into Web Audio so the whole DSP chain works on full songs) */
+  directActive: boolean;
+  directResolving: boolean;
+  directVideoId: string | null;
+  directChannel: string | null;
 
   /* song */
   song: UiSong | null;
@@ -148,6 +158,12 @@ export const useKaraoke = create<KaraokeState>((set) => ({
   ytSource: 'auto',
   ytVariant: 'original',
   ytResolving: false,
+  ytProbing: false,
+
+  directActive: false,
+  directResolving: false,
+  directVideoId: null,
+  directChannel: null,
 
   song: null,
   loadingFile: false,

@@ -11,6 +11,11 @@ export interface YtPlayer {
   pauseVideo(): void;
   seekTo(seconds: number, allowSeekAhead: boolean): void;
   setVolume(volume: number): void;
+  /** v3.3 — muted-autoplay support: probes and the live session both start
+   *  muted (autoplay policy) and unmute on the user's tap. */
+  mute(): void;
+  unMute(): void;
+  isMuted(): boolean;
   destroy(): void;
   getPlayerState(): number;
 }
@@ -65,21 +70,30 @@ function loadYtApi(): Promise<YtNamespace> {
 }
 
 /** Loads the API and creates a player in `el`. Rejects on pre-ready failure;
- * `onError` keeps firing after ready (embed-block errors arrive late). */
+ * `onError` keeps firing after ready (embed-block errors arrive late).
+ * `muted` starts the player pre-muted (autoplay-policy-safe). */
 export async function createYtPlayer(
   el: HTMLElement,
   videoId: string,
   onState: (ev: { data: number }) => void,
   onError?: (code: number) => void,
+  opts?: { muted?: boolean },
 ): Promise<YtPlayer> {
   const YT = await loadYtApi();
   return new Promise<YtPlayer>((resolve, reject) => {
     let settled = false;
     const player = new YT.Player(el, {
       videoId,
-      playerVars: { playsinline: 1, rel: 0, modestbranding: 1 },
+      playerVars: { playsinline: 1, rel: 0, modestbranding: 1, ...(opts?.muted ? { mute: 1 } : {}) },
       events: {
         onReady: () => {
+          if (opts?.muted) {
+            try {
+              player.mute();
+            } catch {
+              /* non-fatal — the mute=1 playerVar already covers it */
+            }
+          }
           settled = true;
           resolve(player);
         },
