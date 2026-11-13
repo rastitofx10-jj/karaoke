@@ -69,6 +69,8 @@ interface KaraokeState {
   ytIndex: number;
   /** 'auto' = resolved from the catalog song, 'manual' = pasted link. */
   ytSource: 'auto' | 'manual';
+  /** Which kind of backing track the resolver looks for. */
+  ytVariant: 'original' | 'karaoke';
   /** True while /api/discover/youtube is resolving full-song sources. */
   ytResolving: boolean;
 
@@ -144,6 +146,7 @@ export const useKaraoke = create<KaraokeState>((set) => ({
   ytCandidates: [],
   ytIndex: 0,
   ytSource: 'auto',
+  ytVariant: 'original',
   ytResolving: false,
 
   song: null,

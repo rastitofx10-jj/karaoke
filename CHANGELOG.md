@@ -1,5 +1,70 @@
 # TITO KARAOKE STUDIO — Changelog
 
+## 3.2 — FULL SONGS, BULLETPROOF (2026-11-13)
+
+The "29-second song is not a song" and "lyrics not in place" release. Every
+known way a full-song session could die or desync is now handled.
+
+### THE LYRICS RACE (the real "not in place" bug)
+- **Root cause found**: the full-song LRC and the AI preview sync resolve at
+  different speeds. When YouTube failed and the app fell back to the 30-second
+  preview, a late-arriving full-song LRC could land **on top of the preview
+  playback** — full-song timestamps on a 30-second clip, every line wrong.
+- `applyPrepare` now carries a **live-mode guard**: a full-timeline result is
+  dropped the moment the preview owns the clock and vice versa. The two
+  timelines can never overwrite each other again.
+- Every full-song (re)start — "try the full song again", the karaoke/original
+  toggle, a pasted link — now **re-attaches the full-timeline lyrics** instead
+  of leaving clip-timeline words on a full song.
+
+### FULL-SONG SOURCES
+- **oEmbed embeddability probe (server)** — embed-blocked videos (the #1
+  killer: official music videos are often embed-disabled, error 101/150) are
+  dropped before the client ever mounts them. Probes cached 24 h; a probe
+  outage never filters anything.
+- **8 candidates** per resolve (was 5), empty results cached only 10 minutes
+  (was 6 h) so "try again" gets a real second chance; `fresh=1` bypasses the
+  cache for user-driven retries.
+- **Karaoke variant** — `variant=karaoke` re-tunes the resolver for
+  instrumental backing-track uploads ("karaoke", "instrumental", "no vocals",
+  karaoke channels), with a looser duration window for count-in intros. One
+  toggle in the studio: original ⇄ karaoke version.
+- **Autoplay-block handling** — if the browser refuses programmatic playback,
+  a big **"tap to start the song"** overlay appears (a real gesture always
+  works); if even that fails, the overlay gets out of the way so YouTube's own
+  play button is reachable.
+- **3-second stall watchdog + 3-strike environment rule** — a frozen clock
+  cascades after 3 s; three consecutive stalls means the whole environment
+  blocks embeds, so the app skips straight to the honest fallback instead of
+  burning ~30 s on dead sources.
+
+### THE GOLDEN PATH, REORDERED
+- The full-song session now starts **the moment sources resolve** — the 30 s
+  shell (fallback surface + melody + lyrics home) loads in parallel and never
+  blocks the music. Shell failures retry once; lyrics attach right after.
+- The preview fallback is honest: a clear "playing a 30-second excerpt" notice
+  with a **"try the full song again"** button and the manual link paste.
+- `powerOn()` never awaits a gesture-blocked `AudioContext.resume()` — a
+  blocked audio context can no longer hang a song load (the YouTube path
+  doesn't need Web Audio at all).
+
+## 3.1 — FULL SONGS BY DEFAULT (2026-11-13)
+
+- Auto YouTube session on song click, ranked source cascade, ±0.25 s lyric
+  calibration, source line with duration and index.
+
+## 3.0 — ONE STAGE (2026-11-13)
+
+- Two-screen app: HOME (search-first landing) and STUDIO (you, the lyrics,
+  the mic). Deep links, keyboard map, drag & drop kept.
+
+## 2.0 — DISCOVER ENGINE (2026-11-13)
+
+- iTunes catalog search + local charts, official 30 s preview streaming through
+  a same-origin proxy, LRCLIB synced lyrics, AI preview sync (clip transcribed
+  with ASR, fuzzy-aligned against the full-song LRC, offset cached in SQLite),
+  library persistence, play counters, favorites, shareable deep links.
+
 ## 1.0 — THE STAGE (2026-11-13)
 
 The first full build: a complete professional karaoke studio in the browser,

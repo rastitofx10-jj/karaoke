@@ -1,7 +1,12 @@
-/* TITO KARAOKE STUDIO v2.0 — GET /api/discover/youtube
- * Full-song resolver: scrapes YouTube search server-side (no API key)
- * and returns the top 5 playback candidates for the IFrame player.
- * An empty list means "no full song" — the client keeps the 30s preview.
+/* TITO KARAOKE STUDIO v3.2 — GET /api/discover/youtube
+ * Full-song resolver: scrapes YouTube search server-side (no API key),
+ * drops embed-blocked sources via an oEmbed probe and returns the top
+ * playback candidates for the IFrame player.
+ *   variant=original (default) — the song as released
+ *   variant=karaoke            — instrumental / backing-track uploads
+ *   fresh=1                    — bypass the cache (user pressed "try again")
+ * An empty list means "no playable full song" — the client keeps the 30s
+ * preview and says so.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -14,7 +19,9 @@ export async function GET(req: NextRequest) {
   const artist = (req.nextUrl.searchParams.get('artist') ?? '').trim().slice(0, 200);
   const ms = Number(req.nextUrl.searchParams.get('durationMs'));
   const durationMs = Number.isFinite(ms) && ms > 0 ? Math.floor(ms) : 0;
+  const variant = req.nextUrl.searchParams.get('variant') === 'karaoke' ? 'karaoke' : 'original';
+  const fresh = req.nextUrl.searchParams.get('fresh') === '1';
   if (!title || !artist) return NextResponse.json({ candidates: [] });
-  const candidates = await resolveYtCandidates({ title, artist, durationMs });
+  const candidates = await resolveYtCandidates({ title, artist, durationMs, variant, fresh });
   return NextResponse.json({ candidates });
 }

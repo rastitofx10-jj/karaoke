@@ -30,6 +30,13 @@ interface YtNamespace {
 /** The live player of the current full-song session (null when inactive). */
 export const ytActivePlayer: { current: YtPlayer | null } = { current: null };
 
+/** Consecutive stall-cascade failures (player claims PLAYING but the clock
+ * never moves — the bot-wall / dead-embed fingerprint). Three in a row means
+ * the ENVIRONMENT blocks embeds, not one bad video: stop cascading and fall
+ * back to the preview instead of burning ~30s on the remaining sources.
+ * Real onError events (embed-disabled etc.) reset it — those are per-video. */
+export const ytStallFails: { count: number } = { count: 0 };
+
 let ytPromise: Promise<YtNamespace> | null = null;
 
 function loadYtApi(): Promise<YtNamespace> {

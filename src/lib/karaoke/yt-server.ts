@@ -1,4 +1,4 @@
-/* TITO KARAOKE STUDIO v2.0 — YOUTUBE FULL-SONG RESOLVER (server only)
+/* TITO KARAOKE STUDIO v3.2 — YOUTUBE FULL-SONG RESOLVER (server only)
  *
  * No YouTube API key exists, so full-song candidates are resolved by
  * scraping the public search results page: fetch it with a desktop-Chrome
@@ -8,18 +8,32 @@
  * title/artist tokens, view count). The best candidate feeds the IFrame
  * player so karaoke sessions run on full songs, not 30s iTunes previews.
  *
+ * v3.2 hardening — sources that CANNOT play are cut before the client ever
+ * mounts them:
+ *   • oEmbed embeddability probe (101/150 embed-disabled videos are the #1
+ *     full-song killer in the wild — official music videos are often
+ *     blocked; karaoke/lyric channels are not)
+ *   • variant=karaoke — the same resolver, re-tuned for instrumental /
+ *     karaoke backing tracks (the true karaoke machine mode)
+ *   • fresh=1 — user-driven retries bypass the (empty-result) cache
+ *
  * Every exported function is total: any network/parse failure degrades to
- * []. Results (including empty ones) are cached 6h in memory and
- * de-duplicated in flight via discover-server helpers.
+ * []. Results (including empty ones) are cached in memory and de-duplicated
+ * in flight via discover-server helpers.
  */
 
 import { dedupe, memGet, memSet } from '@/lib/karaoke/discover-server';
 import type { YtCandidate } from '@/lib/karaoke/discover-types';
 
+export type YtVariant = 'original' | 'karaoke';
+
 export interface YtResolveInput {
   title: string;
   artist: string;
   durationMs?: number;
+  variant?: YtVariant;
+  /** Skip the cached result (user pressed "try again"). */
+  fresh?: boolean;
 }
 
 /* ------------------------------------------------------------------ */
@@ -160,6 +174,56 @@ function collectVideos(node: unknown, out: Map<string, RawVideo>): void {
 }
 
 /* ------------------------------------------------------------------ */
+/* oEmbed embeddability probe                                          */
+/* ------------------------------------------------------------------ */
+
+/* 200 → embeddable · 401/403 → embedding disabled by the owner · 404 →
+ * gone · anything else / network error → unknown (null — keep the video,
+ * the client cascade still handles late failures). Probes are cached 24h. */
+const OEMBED_TTL_MS = 24 * 60 * 60 * 1000;
+
+async function probeEmbeddable(videoId: string): Promise<boolean | null> {
+  const key = `yt:oembed:${videoId}`;
+  const cached = memGet<boolean>(key);
+  if (cached !== null) return cached;
+  try {
+    const url =
+      'https://www.youtube.com/oembed?format=json&url=' +
+      encodeURIComponent(`https://www.youtube.com/watch?v=${videoId}`);
+    const res = await fetch(url, {
+      headers: { 'User-Agent': YT_UA, Accept: 'application/json' },
+      signal: AbortSignal.timeout(5000),
+      cache: 'no-store',
+    });
+    if (res.ok) {
+      memSet(key, true, OEMBED_TTL_MS);
+      return true;
+    }
+    if (res.status === 401 || res.status === 403 || res.status === 404) {
+      memSet(key, false, OEMBED_TTL_MS);
+      return false;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** Drop hard-embed-blocked videos before they reach the client. If the
+ * oEmbed endpoint itself is unreachable (every probe = null) the list is
+ * returned untouched — never punish the user for a probe outage. */
+async function filterEmbeddable(cands: YtCandidate[]): Promise<YtCandidate[]> {
+  if (cands.length === 0) return [];
+  const top = cands.slice(0, 10);
+  const verdicts = await Promise.all(top.map((c) => probeEmbeddable(c.videoId)));
+  if (verdicts.every((v) => v === null)) return cands.slice(0, 8);
+  const kept = top.filter((_, i) => verdicts[i] !== false);
+  /* a fully-blocked top-10 honestly returns [] — the client falls back to
+   * the preview instantly instead of burning ~30s cascading dead sources */
+  return kept.slice(0, 8);
+}
+
+/* ------------------------------------------------------------------ */
 /* filtering + scoring                                                 */
 /* ------------------------------------------------------------------ */
 
@@ -169,7 +233,12 @@ const TITLE_EXCLUDE = [
 ];
 const TITLE_DEPRIORITIZE = ['karaoke', 'cover', 'instrumental', 'acoustic', 'piano'];
 const TITLE_BONUS = ['official audio', 'lyric', 'lyrics', 'video oficial', 'hd', 'remaster'];
-const FILLER_TOKENS = new Set(['official', 'video', 'audio', 'lyrics', 'hd', '4k', 'remaster']);
+/* Karaoke-mode signals — these uploads are backing tracks (no lead vocals). */
+const KARAOKE_BONUS = [
+  'karaoke', 'instrumental', 'backing track', 'sing along', 'singalong',
+  'no vocals', 'vocal removed', 'עיבוד קריוקי', 'קריוקי',
+];
+const FILLER_TOKENS = new Set(['official', 'video', 'audio', 'lyrics', 'hd', '4k', 'remaster', 'karaoke', 'version']);
 
 /** lowercase, punctuation + brackets stripped, filler words dropped. */
 function normTokens(s: string): string[] {
@@ -180,7 +249,14 @@ function normTokens(s: string): string[] {
     .filter((t) => t.length > 0 && !FILLER_TOKENS.has(t));
 }
 
-function scoreCandidates(raw: RawVideo[], title: string, artist: string, expectedSec: number): YtCandidate[] {
+function scoreCandidates(
+  raw: RawVideo[],
+  title: string,
+  artist: string,
+  expectedSec: number,
+  variant: YtVariant,
+): YtCandidate[] {
+  const karaoke = variant === 'karaoke';
   const titleToks = normTokens(title);
   const artistToks = normTokens(artist);
   // main (longest = most distinctive) artist token
@@ -189,9 +265,11 @@ function scoreCandidates(raw: RawVideo[], title: string, artist: string, expecte
   const out: YtCandidate[] = [];
   for (const v of raw) {
     const tl = v.title.toLowerCase();
+    /* karaoke uploads add intros/outros (count-ins, guides) — a looser cap */
+    const durCap = karaoke ? expectedSec * 1.6 + 45 : expectedSec * 1.35 + 45;
     if (v.durationSec < 45 || v.durationSec > 4000) continue;
     if (TITLE_EXCLUDE.some((w) => tl.includes(w))) continue;
-    if (expectedSec > 0 && v.durationSec > expectedSec * 1.35 + 45) continue;
+    if (expectedSec > 0 && v.durationSec > durCap) continue;
 
     const candToks = new Set(normTokens(v.title));
     const channelToks = new Set(normTokens(v.channel));
@@ -203,8 +281,16 @@ function scoreCandidates(raw: RawVideo[], title: string, artist: string, expecte
         : 15;
     if (titleToks.length > 0 && titleToks.every((t) => candToks.has(t))) score += 10;
     if (mainArtist && (candToks.has(mainArtist) || channelToks.has(mainArtist))) score += 5;
-    if (TITLE_BONUS.some((w) => tl.includes(w))) score += 3;
-    if (TITLE_DEPRIORITIZE.some((w) => tl.includes(w))) score -= 6;
+
+    if (karaoke) {
+      /* backing-track mode: karaoke channels and karaoke titles win big */
+      if (KARAOKE_BONUS.some((w) => tl.includes(w))) score += 14;
+      if ([...channelToks].some((t) => KARAOKE_BONUS.some((w) => t.includes(w) || w.includes(t)))) score += 8;
+      if (TITLE_DEPRIORITIZE.some((w) => tl.includes(w))) score += 4; // "cover" etc. is fine here
+    } else {
+      if (TITLE_BONUS.some((w) => tl.includes(w))) score += 3;
+      if (TITLE_DEPRIORITIZE.some((w) => tl.includes(w))) score -= 6;
+    }
     if (v.views > 0) score += Math.log10(v.views + 10) / 2;
 
     out.push({
@@ -216,14 +302,17 @@ function scoreCandidates(raw: RawVideo[], title: string, artist: string, expecte
     });
   }
   out.sort((a, b) => b.score - a.score);
-  return out.slice(0, 5);
+  return out.slice(0, 12);
 }
 
 /* ------------------------------------------------------------------ */
-/* resolution pipeline (3 attempts, cached + deduped)                  */
+/* resolution pipeline (cached + deduped + embeddability-filtered)      */
 /* ------------------------------------------------------------------ */
 
+/* found results stick 6h; EMPTY results stick only 10 minutes so a
+ * "try again" has a real chance after a transient scrape failure */
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const CACHE_TTL_EMPTY_MS = 10 * 60 * 1000;
 
 async function attemptSearch(query: string, videosOnly: boolean): Promise<RawVideo[] | null> {
   const html = await fetchSearchHtml(query, videosOnly);
@@ -235,14 +324,28 @@ async function attemptSearch(query: string, videosOnly: boolean): Promise<RawVid
   return [...videos.values()];
 }
 
-async function searchCandidates(title: string, artist: string, expectedSec: number): Promise<YtCandidate[]> {
+async function searchCandidates(
+  title: string,
+  artist: string,
+  expectedSec: number,
+  variant: YtVariant,
+): Promise<YtCandidate[]> {
   const q = `${artist} ${title}`.trim();
-  // 1. videos-only filter → 2. unfiltered → 3. "audio" suffix (audio rips)
-  const attempts: Array<[string, boolean]> = [
-    [q, true],
-    [q, false],
-    [`${q} audio`, false],
-  ];
+  // original: filtered → unfiltered → "audio" suffix
+  // karaoke: "karaoke" suffix → filtered → "instrumental" suffix
+  const attempts: Array<[string, boolean]> =
+    variant === 'karaoke'
+      ? [
+          [`${q} karaoke`, true],
+          [`${q} karaoke`, false],
+          [`${q} instrumental`, false],
+          [q, true],
+        ]
+      : [
+          [q, true],
+          [q, false],
+          [`${q} audio`, false],
+        ];
   let hardFails = 0;
   for (const [query, videosOnly] of attempts) {
     const raw = await attemptSearch(query, videosOnly);
@@ -250,7 +353,7 @@ async function searchCandidates(title: string, artist: string, expectedSec: numb
       hardFails++;
       continue;
     }
-    const scored = scoreCandidates(raw, title, artist, expectedSec);
+    const scored = scoreCandidates(raw, title, artist, expectedSec, variant);
     if (scored.length > 0) return scored;
   }
   if (hardFails > 0) {
@@ -266,19 +369,23 @@ export async function resolveYtCandidates(input: YtResolveInput): Promise<YtCand
     const title = input.title.trim();
     const artist = input.artist.trim();
     if (!title || !artist) return [];
+    const variant: YtVariant = input.variant === 'karaoke' ? 'karaoke' : 'original';
     const ms =
       typeof input.durationMs === 'number' && Number.isFinite(input.durationMs) && input.durationMs > 0
         ? Math.floor(input.durationMs)
         : 0;
 
-    const key = `yt:res:${artist.toLowerCase()}|${title.toLowerCase()}|${ms}`;
-    const cached = memGet<YtCandidate[]>(key);
-    if (cached) return cached;
+    const key = `yt:res:${variant}:${artist.toLowerCase()}|${title.toLowerCase()}|${ms}`;
+    if (!input.fresh) {
+      const cached = memGet<YtCandidate[]>(key);
+      if (cached) return cached;
+    }
 
     return await dedupe(key, async () => {
-      const candidates = await searchCandidates(title, artist, ms / 1000);
-      memSet(key, candidates, CACHE_TTL_MS); // empty lists get cached too
-      return candidates;
+      const scored = await searchCandidates(title, artist, ms / 1000, variant);
+      const filtered = await filterEmbeddable(scored);
+      memSet(key, filtered, filtered.length > 0 ? CACHE_TTL_MS : CACHE_TTL_EMPTY_MS);
+      return filtered;
     });
   } catch {
     return [];

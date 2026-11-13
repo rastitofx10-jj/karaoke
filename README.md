@@ -1,7 +1,18 @@
-# TITO KARAOKE STUDIO · v1.0 — THE STAGE
+# TITO KARAOKE STUDIO · v3.2 — FULL SONGS
 
-**אולפן קריוקי מקצועי שלם, בדפדפן. הנדסה לאחור של אפליקציית קריוקי — ובנייה מחדש כמה רמות מעליה.**
-A complete professional karaoke studio that runs entirely in the browser. No server, no uploads — every sample, every pitch, every score is computed on your machine.
+**אולפן קריוקי מקצועי שלם, בדפדפן. חיפוש שיר → שיר מלא → מילים מסונכרנות → שירה.**
+A complete professional karaoke studio that runs entirely in the browser. Search a song, get the **full song** with **time-synced lyrics**, and sing — every sample, every pitch, every score computed on your machine.
+
+---
+
+## THE GOLDEN PATH (v3.2 — bulletproof)
+
+1. **Search** — the iTunes catalog (millions of songs, official artwork + metadata) plus live local charts.
+2. **Full song, automatically** — the server ranks full-length YouTube sources for the song you picked, drops every embed-blocked source up front (oEmbed probe), and the session starts the moment you click a song. No source survives? A cascade tries the next one; the environment blocks them all? An honest 30-second preview keeps the stage alive with a one-click **"try the full song again"**.
+3. **Lyrics in place** — LRCLIB synced lyrics on the song's original timeline, so they line up with the full song exactly. Karaoke (`instrumental`) uploads with intro drift? **±0.25 s calibration** buttons.
+4. **Original ⇄ Karaoke version** — one toggle re-resolves the backing track to instrumental karaoke uploads (no lead vocals) — a true karaoke machine when the upload exists.
+5. **Autoplay-blocked? Tap to start** — the app shows a big tap button instead of a silent black rectangle; after one failed tap it gets out of the way and lets you press YouTube's own play button.
+6. Sing — mic console, vocal engine, live pitch, scoring, recording. Everything below still applies.
 
 ---
 
@@ -45,7 +56,7 @@ bun install
 bun run dev        # http://localhost:3000
 ```
 
-Open the app → **הדלקה** (power) → drop an MP3 → load an LRC (or sync one in the editor) → **סריקה** (melody scan) → **הקלט** (REC) → sing → get judged.
+Open the app → search a song (or drop an MP3) → the full song + synced lyrics load → **F** for stage mode → sing.
 
 ## ARCHITECTURE
 
@@ -60,16 +71,22 @@ src/lib/karaoke/
   storage.ts      IndexedDB library + settings
   engine.ts       the Web Audio graph — one class owns everything
   worklets.ts     AudioWorklet sources (pitch-shift, recorder)
+  yt.ts           YouTube IFrame bridge + stall-failure telemetry
+  yt-server.ts    full-song resolver: search scrape → scoring → oEmbed probe
+  discover-server.ts  iTunes search/charts + LRCLIB + AI preview sync (ASR)
   i18n.ts         HE/EN dictionary
+src/app/api/discover/  search · charts · prepare (lyrics) · youtube · audio · plays
 src/components/karaoke/   the console UI
-src/hooks/use-engine.ts   React binding + actions (rAF heartbeat)
+src/hooks/use-engine.ts   React binding + actions (rAF heartbeat, golden path)
 src/store/karaoke.ts      zustand store
 ```
 
 ## HONEST EDGES
 
-- Vocal removal is the classic center-cancel trick — great on 90% of pop/rock mixes, weak on hard-panned or heavily doubled vocals. That's physics, not a bug.
+- Full-length playback comes from YouTube embeds. If a network (or YouTube's bot wall) blocks embeds for you, the app tells you so, keeps the honest 30-second preview running and offers **"try the full song again"** plus a manual link paste.
+- Vocal removal is the classic center-cancel trick — great on 90% of pop/rock mixes, weak on hard-panned or heavily doubled vocals. That's physics, not a bug. (On full-song YouTube playback the vocal engine applies to the 30 s preview shell only.)
 - Melody scan quality depends on the lead vocal sitting in the center. Wide-stereo acapellas will scan noisily.
+- Lyric coverage follows LRCLIB — most popular songs (HE and EN both) have synced lyrics; when a song doesn't, the app says so and offers a retry + the tap-to-sync editor.
 - Speaker monitoring without headphones = feedback loop. The app marks it red for a reason.
 - Chrome/Edge/Firefox only (AudioWorklet). Safari mostly works, untested.
 

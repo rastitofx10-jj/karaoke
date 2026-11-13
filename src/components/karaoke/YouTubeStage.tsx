@@ -1,22 +1,29 @@
 'use client';
 
-/* TITO KARAOKE STUDIO v3.1 — the full-song YouTube stage.
- * v3.0 made full songs possible; v3.1 makes them the DEFAULT: the app
- * resolves the full song automatically (server-side ranking) and this stage
- * mounts the player the moment the session starts. An embed-blocked source
- * cascades to the next candidate; when all fail we fall back to the 30s
- * preview. Calibration buttons nudge the lyric timeline when a video carries
- * an intro/outro that shifts the words.
+/* TITO KARAOKE STUDIO v3.2 — the full-song YouTube stage.
+ * v3.0 made full songs possible; v3.1 made them the DEFAULT; v3.2 makes
+ * them BULLETPROOF:
+ *   • the server pre-filters embed-blocked sources (oEmbed probe), so the
+ *     cascade only meets playable videos;
+ *   • autoplay-blocked browsers get a big "tap to start" overlay instead
+ *     of a silent black rectangle (the play() call needs a user gesture
+ *     the async song load may have consumed);
+ *   • the stall watchdog still cascades bot-walled / frozen sources;
+ *   • variant toggle: original song ⇄ karaoke (instrumental) backing
+ *     track — a true karaoke machine when the upload exists;
+ *   • a preview fallback is now honest about itself: a clear notice plus
+ *     a "try the full song again" door, not just a 29s surprise.
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { AlertCircle, Link2, Loader2, RotateCcw, Timer, Youtube } from 'lucide-react';
+import { AlertCircle, Link2, Loader2, Mic2, Music2, RotateCcw, Timer, Youtube } from 'lucide-react';
 import { toast } from 'sonner';
 import { useKaraoke } from '@/store/karaoke';
 import { useKaraokeEngine, getEngine } from '@/hooks/use-engine';
 import { DICTS } from '@/lib/karaoke/i18n';
-import { createYtPlayer, parseYtId, ytActivePlayer } from '@/lib/karaoke/yt';
+import { createYtPlayer, parseYtId, ytActivePlayer, ytStallFails } from '@/lib/karaoke/yt';
 import type { YtPlayer } from '@/lib/karaoke/yt';
+import { cn } from '@/lib/utils';
 
 function fmtSec(s: number): string {
   const v = Math.max(0, Math.round(s));
@@ -36,18 +43,34 @@ function YtSession({ videoId }: { videoId: string }) {
   const t = DICTS[lang];
   const actions = useKaraokeEngine();
   const [busy, setBusy] = useState(true);
+  /** autoplay was blocked — a real click is required to start the sound */
+  const [needsTap, setNeedsTap] = useState(false);
   const holderRef = useRef<HTMLDivElement>(null);
   const endsRef = useRef(0);
   const stallRef = useRef(0);
   const lastPosRef = useRef(-1);
+  const tapRef = useRef(false);
+  /** the user already tapped once — if that failed too, get out of the way
+   * and let them press YouTube's own play button inside the iframe */
+  const tappedRef = useRef(false);
 
   useEffect(() => {
     if (!holderRef.current) return;
     let dead = false;
     let poll = 0;
+    let started = false;
+    let readyAt = 0;
     endsRef.current = 0;
     stallRef.current = 0;
     lastPosRef.current = -1;
+    tapRef.current = false;
+    tappedRef.current = false;
+
+    const setTap = (v: boolean): void => {
+      if (tapRef.current === v) return;
+      tapRef.current = v;
+      setNeedsTap(v);
+    };
 
     /* YT replaces the element it mounts on with an iframe — hand it a fresh
      * child div every session and clear the wrapper on teardown. */
@@ -57,9 +80,13 @@ function YtSession({ videoId }: { videoId: string }) {
     holder.appendChild(el);
 
     /* one failure voice for the whole session: embed errors and dead
-     * sources both cascade; every candidate exhausted → preview fallback. */
-    const onFail = (): void => {
+     * sources both cascade; every candidate exhausted → preview fallback.
+     * A stalled clock (bot wall / dead stream) counts against the
+     * ENVIRONMENT — three in a row skips the remaining sources. Real
+     * onError events are per-video and reset that counter. */
+    const onFail = (stalled = false): void => {
       if (dead) return;
+      if (stalled) ytStallFails.count += 1;
       const st = useKaraoke.getState();
       if (st.ytSource === 'auto') {
         if (!actions.ytTryNext()) void actions.ytFailed();
@@ -75,14 +102,20 @@ function YtSession({ videoId }: { videoId: string }) {
       (ev) => {
         /* state events keep the store honest; polling covers the clock */
         const st = useKaraoke.getState();
-        if (ev.data === 1) st.patch({ playing: true });
-        else if (ev.data === 2) st.patch({ playing: false });
+        if (ev.data === 1) {
+          st.patch({ playing: true });
+          started = true;
+          setTap(false);
+        } else if (ev.data === 2) st.patch({ playing: false });
         else if (ev.data === 0) {
           st.patch({ playing: false });
           if (useKaraoke.getState().recording) void actions.stopRecording();
         }
       },
-      () => onFail(),
+      () => {
+        ytStallFails.count = 0; // a real per-video error, not an environment stall
+        onFail(false);
+      },
     )
       .then((player: YtPlayer) => {
         if (dead) {
@@ -96,6 +129,7 @@ function YtSession({ videoId }: { videoId: string }) {
           /* some embeds hide setVolume — non-fatal */
         }
         setBusy(false);
+        readyAt = Date.now();
         void player.playVideo();
         poll = window.setInterval(() => {
           const p = ytActivePlayer.current;
@@ -110,24 +144,46 @@ function YtSession({ videoId }: { videoId: string }) {
             endsRef.current = dur;
             actions.refreshLyricEnds(dur);
           }
-          /* stall watchdog: the player claims PLAYING but the clock is frozen
-           * (silent embed walls never fire onError) — cascade after 6s. */
+
           let state = -1;
           try {
             state = p.getPlayerState();
           } catch {
             state = -1;
           }
+
+          /* autoplay watchdog: the player is ready, play() was called, but
+           * the browser refused unmuted autoplay (no error fires for this).
+           * Buffering (3) keeps waiting — slow networks buffer for seconds.
+           * A visible tap converts to a real user gesture → sound, always.
+           * After one tap that failed too, never re-cover the iframe — the
+           * user needs YouTube's own play button underneath. */
+          if (!started) {
+            if (state === 1) {
+              started = true;
+              setTap(false);
+            } else if (
+              readyAt > 0 &&
+              Date.now() - readyAt > 3200 &&
+              state !== 3 &&
+              !tappedRef.current
+            ) {
+              setTap(true);
+            }
+          }
+
+          /* stall watchdog: the player claims PLAYING but the clock is frozen
+           * (silent embed walls never fire onError) — cascade after 3s. */
           if (state === 1 && Math.abs(pos - lastPosRef.current) < 0.05) {
             stallRef.current += 1;
           } else {
             stallRef.current = 0;
           }
           lastPosRef.current = pos;
-          if (stallRef.current >= 24) {
+          if (stallRef.current >= 12) {
             if (poll) window.clearInterval(poll);
             poll = 0;
-            onFail();
+            onFail(true);
           }
         }, 250);
       })
@@ -149,12 +205,35 @@ function YtSession({ videoId }: { videoId: string }) {
     };
   }, [videoId]);
 
+  const tapStart = (): void => {
+    tappedRef.current = true;
+    setNeedsTap(false);
+    const p = ytActivePlayer.current;
+    try {
+      p.playVideo();
+    } catch {
+      /* the iframe may not be ready yet — YouTube's own play button stays */
+    }
+  };
+
   return (
     <div className="relative w-full overflow-hidden rounded-lg border border-[var(--line2)] bg-black">
       <div className="relative aspect-video w-full">
-        {busy && (
+        {(busy || needsTap) && (
           <span className="absolute inset-0 z-10 flex items-center justify-center">
-            <Loader2 size={26} className="animate-spin text-[var(--b)]" aria-hidden />
+            {busy ? (
+              <Loader2 size={26} className="animate-spin text-[var(--b)]" aria-hidden />
+            ) : (
+              /* autoplay was blocked — a real click is the only way in */
+              <button
+                type="button"
+                onClick={tapStart}
+                className="flex min-h-[44px] items-center gap-2 rounded-full border border-[color-mix(in_srgb,var(--b)_60%,transparent)] bg-[var(--ink)]/85 px-5 py-2.5 text-[13px] font-black text-[var(--b)] shadow-lg backdrop-blur-sm transition-transform hover:scale-[1.03]"
+              >
+                <Music2 size={16} aria-hidden />
+                {t.tapStart}
+              </button>
+            )}
           </span>
         )}
         <div ref={holderRef} className="h-full w-full [&>iframe]:absolute [&>iframe]:inset-0 [&>iframe]:h-full [&>iframe]:w-full" />
@@ -175,8 +254,10 @@ export function YouTubeStage() {
   const ytVideoId = useKaraoke((s) => s.ytVideoId);
   const ytCandidates = useKaraoke((s) => s.ytCandidates);
   const ytIndex = useKaraoke((s) => s.ytIndex);
+  const ytVariant = useKaraoke((s) => s.ytVariant);
   const ytResolving = useKaraoke((s) => s.ytResolving);
   const recording = useKaraoke((s) => s.recording);
+  const activeDiscover = useKaraoke((s) => s.activeDiscover);
   const [link, setLink] = useState('');
   const [badLink, setBadLink] = useState(false);
 
@@ -211,6 +292,42 @@ export function YouTubeStage() {
           </span>
         )}
       </header>
+
+      {/* variant toggle — original song ⇄ karaoke (instrumental) track */}
+      <div className="grid grid-cols-2 gap-1.5" role="group" aria-label={t.fullSong}>
+        <button
+          type="button"
+          onClick={() => void actions.switchYtVariant('original')}
+          disabled={ytVariant === 'original' || ytResolving}
+          aria-pressed={ytVariant === 'original'}
+          className={cn(
+            'flex min-h-[38px] items-center justify-center gap-1.5 rounded-lg border text-[11.5px] font-bold transition-colors',
+            ytVariant === 'original'
+              ? 'border-[color-mix(in_srgb,var(--b)_55%,transparent)] bg-[var(--b-soft)] text-[var(--b)]'
+              : 'border-[var(--line2)] bg-[var(--panel2)] text-[var(--dim)] hover:text-[var(--text)]',
+            ytResolving && 'opacity-60',
+          )}
+        >
+          <Music2 size={13} aria-hidden />
+          {t.varOriginal}
+        </button>
+        <button
+          type="button"
+          onClick={() => void actions.switchYtVariant('karaoke')}
+          disabled={ytVariant === 'karaoke' || ytResolving}
+          aria-pressed={ytVariant === 'karaoke'}
+          className={cn(
+            'flex min-h-[38px] items-center justify-center gap-1.5 rounded-lg border text-[11.5px] font-bold transition-colors',
+            ytVariant === 'karaoke'
+              ? 'border-[color-mix(in_srgb,var(--b)_55%,transparent)] bg-[var(--b-soft)] text-[var(--b)]'
+              : 'border-[var(--line2)] bg-[var(--panel2)] text-[var(--dim)] hover:text-[var(--text)]',
+            ytResolving && 'opacity-60',
+          )}
+        >
+          <Mic2 size={13} aria-hidden />
+          {t.varKaraoke}
+        </button>
+      </div>
 
       {/* resolving — the server is ranking full-song sources */}
       {ytResolving && !ytActive && (
@@ -262,6 +379,24 @@ export function YouTubeStage() {
             </div>
           </div>
         </>
+      )}
+
+      {/* preview fallback — honest about the 30s and one click from retry */}
+      {!ytActive && !ytResolving && activeDiscover && (
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-2 rounded-lg border border-[color-mix(in_srgb,var(--warn)_40%,transparent)] bg-[color-mix(in_srgb,var(--warn)_9%,transparent)] px-3 py-2.5">
+            <AlertCircle size={15} className="shrink-0 text-[var(--warn)]" aria-hidden />
+            <span className="text-[11.5px] font-medium text-[var(--dim)]">{t.previewNotice}</span>
+            <button
+              type="button"
+              onClick={() => void actions.retryFullSong()}
+              className="ms-auto flex min-h-[36px] shrink-0 items-center gap-1.5 rounded-lg border border-[color-mix(in_srgb,var(--warn)_55%,transparent)] bg-[var(--panel2)] px-2.5 text-[11px] font-bold text-[var(--warn)] transition-colors hover:bg-[color-mix(in_srgb,var(--warn)_15%,transparent)]"
+            >
+              <RotateCcw size={12} aria-hidden />
+              {t.retryFull}
+            </button>
+          </div>
+        </div>
       )}
 
       {/* manual paste — secondary, only when the auto session is off */}

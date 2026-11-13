@@ -20,7 +20,7 @@ import { useKaraoke } from '@/store/karaoke';
 import { DICTS } from '@/lib/karaoke/i18n';
 import type { LrcSong, RankKey, ScoreResult, TakeMeta, VocalMode } from '@/lib/karaoke/types';
 import type { DiscoverSong, HotSong, PrepareResult, YtCandidate } from '@/lib/karaoke/discover-types';
-import { ytActivePlayer } from '@/lib/karaoke/yt';
+import { ytActivePlayer, ytStallFails } from '@/lib/karaoke/yt';
 
 let engine: KaraokeEngine | null = null;
 export function getEngine(): KaraokeEngine {
@@ -79,14 +79,22 @@ async function fetchPrepare(song: DiscoverSong, mode: 'full' | 'preview'): Promi
   }
 }
 
-/** Ranked full-song YouTube candidates for a catalog song (never throws). */
-async function fetchYtCandidates(song: DiscoverSong): Promise<YtCandidate[]> {
+/** Ranked full-song YouTube candidates for a catalog song (never throws).
+ *  variant 'original' — the song as released · 'karaoke' — backing tracks.
+ *  fresh skips the server cache (used by the explicit "try again"). */
+async function fetchYtCandidates(
+  song: DiscoverSong,
+  variant: 'original' | 'karaoke' = 'original',
+  fresh = false,
+): Promise<YtCandidate[]> {
   try {
     const qs = new URLSearchParams({
       title: song.title,
       artist: song.artist,
       durationMs: String(Math.max(0, Math.round(song.durationMs)) || 0),
+      variant,
     });
+    if (fresh) qs.set('fresh', '1');
     const res = await fetch(`/api/discover/youtube?${qs.toString()}`);
     if (!res.ok) return [];
     const data = (await res.json()) as { candidates?: YtCandidate[] };
@@ -610,20 +618,20 @@ export function useKaraokeEngine() {
     },
 
     /**
-     * THE GOLDEN PATH (v3.1): full songs, full lyrics, zero friction.
-     *   1. shell — the engine gets the 30s clip (library blob or Apple CDN)
-     *      purely as a fallback surface + melody source;
-     *   2. in parallel: full-song lyrics (LRCLIB, original timeline) and a
-     *      ranked list of full-song YouTube sources;
-     *   3. sources found → the full song plays through the YT iframe and the
-     *      lyrics follow the same timeline — a real karaoke machine;
-     *   4. a source is embed-blocked → the next candidate; all fail → the
-     *      30s preview keeps playing with AI-synced lyrics (v2.0 behavior).
+     * THE GOLDEN PATH (v3.2): full songs first, lyrics right behind, zero wait.
+     *   1. in parallel: full-song sources (server ranking + embed probe),
+     *      full-song lyrics (LRCLIB) and the 30s shell (fallback surface);
+     *   2. sources found → the YT session starts THE MOMENT they arrive —
+     *      the shell keeps loading in the background, never blocks the music;
+     *   3. lyrics attach right after the shell lands (they live on the
+     *      engine's song object), on the full-song timeline;
+     *   4. no source / every source fails → the 30s preview + AI-synced
+     *      clip lyrics (v2.0 behavior) with a clear "try the full song
+     *      again" door.
      */
     async loadDiscoverSong(song: DiscoverSong) {
       const st0 = useKaraoke.getState();
       if (!st0.powered) await this.powerOn();
-      const id = `itunes:${song.trackId}`;
       if (useKaraoke.getState().discoverBusyId === song.id) return;
       useKaraoke.getState().patch({
         discoverBusyId: song.id,
@@ -639,26 +647,46 @@ export function useKaraokeEngine() {
         ytIndex: 0,
         ytResolving: true,
         ytSource: 'auto',
+        ytVariant: 'original',
       });
 
-      /* all three in parallel: shell download, full lyrics, full-song sources */
+      /* all three in parallel: sources, lyrics, shell */
+      const ytPromise = fetchYtCandidates(song, useKaraoke.getState().ytVariant);
       const prepFullPromise = fetchPrepare(song, 'full');
-      const ytPromise = fetchYtCandidates(song);
+      const shellPromise = this.ensureShell(song).catch(() => null);
 
       try {
-        await this.ensureShell(song);
-        void this.logPlay(song);
+        /* the full song starts the moment sources are known — the shell
+         * (30s fallback + melody + the lyrics' home) never stands between
+         * the user and the music. If the shell download failed once, one
+         * retry: without it there is nowhere to hang the lyrics. */
+        const shellId = `itunes:${song.trackId}`;
+        const shellLoaded = async (): Promise<boolean> => {
+          await shellPromise;
+          if (getEngine().song?.id === shellId) return true;
+          await this.ensureShell(song).catch(() => null);
+          return getEngine().song?.id === shellId;
+        };
 
-        /* the full song starts the moment sources are known — lyrics attach
-         * while it is already playing (cold LRCLIB lookups can take seconds) */
         const yt = await ytPromise;
         if (yt.length > 0) {
           this.ytAutoStart(yt);
-          this.applyPrepare(await prepFullPromise, 'full', song);
+          void this.logPlay(song);
+          if (await shellLoaded()) {
+            this.applyPrepare(await prepFullPromise, 'full', song);
+          } else {
+            useKaraoke.getState().patch({ syncState: 'none' });
+            toast.warning(t().syncNone, { description: t().networkError });
+          }
           return;
         }
-        const prepFull = await prepFullPromise;
-        await this.startPreviewWithLyrics(song, prepFull);
+        if (await shellLoaded()) {
+          void this.logPlay(song);
+          await this.startPreviewWithLyrics(song, await prepFullPromise);
+        } else {
+          useKaraoke.getState().patch({ syncState: 'none' });
+          toast.error(t().error, { description: t().networkError });
+        }
       } catch {
         useKaraoke.getState().patch({ syncState: 'none' });
         toast.error(t().error, { description: t().networkError });
@@ -688,6 +716,10 @@ export function useKaraokeEngine() {
         artist: song.artist,
         melody: existing?.melody,
       });
+      /* While the YT full song owns the clock, the 30s shell must never
+       * flash its duration/pos/peaks over the live timeline — the poll
+       * re-asserts the real values every 250ms but a flash is still a flash. */
+      const ytOwnsClock = useKaraoke.getState().ytActive;
       useKaraoke.getState().patch({
         song: {
           id,
@@ -697,10 +729,10 @@ export function useKaraokeEngine() {
           hasLrc: false,
           hasMelody: Boolean(existing?.melody && existing.melody.notes.length > 0),
         },
-        duration: buffer.duration,
-        pos: 0,
+        ...(ytOwnsClock
+          ? {}
+          : { duration: buffer.duration, pos: 0, peaks: loaded.peaks }),
         lastTake: null,
-        peaks: loaded.peaks,
       });
 
       if (!existing && file) {
@@ -742,10 +774,19 @@ export function useKaraokeEngine() {
     },
 
     /** Attach a prepare result to the live session - synced LRC, plain
-     * lyrics, or a clear "no lyrics" state. One voice, one place. */
+     * lyrics, or a clear "no lyrics" state. One voice, one place. Never
+     * attaches onto a stale shell from a previous song, and never attaches
+     * a timeline the session has already moved away from: a preview-mode
+     * result is dropped when the full song took over, and a full-mode result
+     * (which resolves seconds after the fallback started) is dropped when
+     * the 30s preview owns the clock — otherwise full-song timestamps land
+     * on a 30-second clip and every line is "not in place". */
     applyPrepare(prep: PrepareResult | null, mode: 'full' | 'preview', song: DiscoverSong) {
       const e = getEngine();
       if (!e.song) return;
+      if (e.song.id !== `itunes:${song.trackId}`) return; // stale shell
+      const liveMode = useKaraoke.getState().ytActive ? 'full' : 'preview';
+      if (liveMode !== mode) return; // stale timeline — the other attach wins
       const st = useKaraoke.getState();
       if (prep?.lrc) {
         const dur =
@@ -849,6 +890,12 @@ export function useKaraokeEngine() {
           playing: true,
           pos: 0,
         });
+        /* a pasted link often arrives while preview-timeline lyrics are
+         * attached (after a fallback) — the full song needs its own words */
+        const song = st.activeDiscover;
+        if (song && e.song?.id === `itunes:${song.trackId}`) {
+          void this.attachFullLyrics(song);
+        }
       } else {
         e.ytPos = null;
         useKaraoke.getState().patch({
@@ -875,6 +922,7 @@ export function useKaraokeEngine() {
       const e = getEngine();
       e.pause();
       e.ytPos = 0;
+      ytStallFails.count = 0; // fresh session — give the environment a fresh chance
       useKaraoke.getState().patch({
         ytActive: true,
         ytVideoId: candidates[0].videoId,
@@ -890,9 +938,67 @@ export function useKaraokeEngine() {
       toast.success(t().fullSongReady, { description: candidates[0].channel || candidates[0].title });
     },
 
-    /** Advance to the next ranked full-song source. false when exhausted. */
+    /** Attach the FULL-timeline lyrics to the live shell. Used whenever a
+     * full-song session (re)starts while preview-timeline lyrics are still
+     * attached: "try the full song again", the karaoke/original toggle and
+     * a pasted link. Total: never throws, self-guarded against mode races. */
+    async attachFullLyrics(song: DiscoverSong) {
+      const e = getEngine();
+      if (e.song?.id !== `itunes:${song.trackId}`) return;
+      if (!useKaraoke.getState().ytActive) return; // the full song must own the clock
+      const prep = await fetchPrepare(song, 'full');
+      this.applyPrepare(prep, 'full', song); // drops itself if the mode flipped
+    },
+
+    /** Switch the backing-track variant (original ⇄ karaoke) for the active
+     * song. Karaoke = instrumental uploads (no lead vocals) — a true
+     * karaoke machine. Falls back to the original when none exist. */
+    async switchYtVariant(variant: 'original' | 'karaoke') {
+      const song = useKaraoke.getState().activeDiscover;
+      if (!song || useKaraoke.getState().ytVariant === variant) return;
+      useKaraoke.getState().patch({ ytVariant: variant, ytResolving: true });
+      const yt = await fetchYtCandidates(song, variant);
+      const cur = useKaraoke.getState();
+      if (!cur.activeDiscover || cur.activeDiscover.id !== song.id) {
+        return; // the session moved on mid-flight
+      }
+      if (yt.length > 0) {
+        this.ytAutoStart(yt);
+        /* the previous session may have been the preview fallback — its
+         * clip-timeline lyrics are wrong for a full song; re-attach */
+        void this.attachFullLyrics(song);
+      } else {
+        useKaraoke.getState().patch({ ytVariant: 'original', ytResolving: false });
+        toast.info(t().ytNoKaraoke);
+      }
+    },
+
+    /** Re-resolve full-song sources after a fallback (the "try again"
+     * button) — bypasses the empty-result cache. */
+    async retryFullSong() {
+      const song = useKaraoke.getState().activeDiscover;
+      if (!song || useKaraoke.getState().ytResolving) return;
+      useKaraoke.getState().patch({ ytResolving: true });
+      const variant = useKaraoke.getState().ytVariant;
+      const yt = await fetchYtCandidates(song, variant, true);
+      if (yt.length > 0) {
+        this.pause();
+        this.ytAutoStart(yt);
+        /* the preview fallback left clip-timeline lyrics on the stage —
+         * the full song needs its own timeline back */
+        void this.attachFullLyrics(song);
+      } else {
+        useKaraoke.getState().patch({ ytResolving: false });
+        toast.warning(t().ytAllFailed);
+      }
+    },
+
+    /** Advance to the next ranked full-song source. false when exhausted
+     * or when the environment stalls every source (bot wall) — the caller
+     * falls back to the preview instead of meeting more dead iframes. */
     ytTryNext(): boolean {
       const st = useKaraoke.getState();
+      if (ytStallFails.count >= 3) return false;
       const next = st.ytCandidates[st.ytIndex + 1];
       if (!next || !next.videoId) return false;
       useKaraoke.getState().patch({ ytVideoId: next.videoId, ytIndex: st.ytIndex + 1, playing: true, pos: 0 });
@@ -910,13 +1016,17 @@ export function useKaraokeEngine() {
     },
 
     /** Re-fetch lyrics for the active catalog song (the "try again" button).
-     * Full-song timeline while the YT session runs, clip timeline otherwise. */
+     * Full-song timeline while the YT session runs, clip timeline otherwise.
+     * Re-ensures the shell first — the lyrics live on it. */
     async retryLyrics() {
       const st = useKaraoke.getState();
       const song = st.activeDiscover;
       if (!song) return;
       st.patch({ syncState: 'syncing' });
       try {
+        if (getEngine().song?.id !== `itunes:${song.trackId}`) {
+          await this.ensureShell(song).catch(() => null);
+        }
         const mode = useKaraoke.getState().ytActive ? 'full' : 'preview';
         const prep = await fetchPrepare(song, mode);
         this.applyPrepare(prep, mode, song);

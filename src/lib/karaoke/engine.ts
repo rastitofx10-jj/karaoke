@@ -154,7 +154,10 @@ export class KaraokeEngine {
 
   async powerOn(): Promise<void> {
     if (this.ready && this.ctx) {
-      if (this.ctx.state === 'suspended') await this.ctx.resume();
+      /* never await resume() here: browsers without user activation refuse
+       * it and the pending promise can hang forever — a blocked context
+       * must never block a song load (the YouTube path doesn't need it) */
+      if (this.ctx.state === 'suspended') void this.ctx.resume().catch(() => {});
       return;
     }
     const ctx = new AudioContext({ latencyHint: 'interactive' });
@@ -168,7 +171,7 @@ export class KaraokeEngine {
     await ctx.audioWorklet.addModule(url2);
     this.buildGraph();
     this.ready = true;
-    if (ctx.state === 'suspended') await ctx.resume();
+    if (ctx.state === 'suspended') void ctx.resume().catch(() => {});
   }
 
   private buildGraph(): void {
@@ -461,7 +464,14 @@ export class KaraokeEngine {
 
   async play(): Promise<void> {
     if (!this.ctx || !this.song) return;
-    if (this.ctx.state === 'suspended') await this.ctx.resume();
+    if (this.ctx.state === 'suspended') {
+      /* bounded wait: a gesture-less resume() may hang — don't lock the
+       * transport forever; playback simply starts when allowed */
+      await Promise.race([
+        this.ctx.resume().catch(() => {}),
+        new Promise((r) => setTimeout(r, 1500)),
+      ]);
+    }
     if (this.ended) {
       this.startPos = 0;
       this.ended = false;
