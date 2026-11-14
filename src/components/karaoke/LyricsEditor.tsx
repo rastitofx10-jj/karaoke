@@ -1,8 +1,12 @@
 'use client';
 
-/* TITO KARAOKE STUDIO v1.0 — lyrics editor with tap-to-sync.
+/* TITO KARAOKE STUDIO v4.0 — lyrics editor with tap-to-sync.
  * Paste plain text → play → tap SPACE (or the big pad) on every line.
  * Nudge, apply, export standard LRC.
+ * v4.0 — FORMAT AUTODETECT: a pasted LRC or SRC keeps its timestamps —
+ * the editor used to flatten a ready-made LRC into plain text and make
+ * the user re-tap what was already timed. Now a pasted LRC lands on the
+ * sync tab fully timed (tap-to-sync remains for genuinely plain text).
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -10,7 +14,7 @@ import { ArrowLeftRight, Download, FileText, Play, RotateCcw, Save } from 'lucid
 import { useKaraoke } from '@/store/karaoke';
 import { useKaraokeEngine, getEngine } from '@/hooks/use-engine';
 import { DICTS } from '@/lib/karaoke/i18n';
-import { serializeLrc } from '@/lib/karaoke/lrc';
+import { parseLrc, serializeLrc } from '@/lib/karaoke/lrc';
 import { formatTime } from '@/lib/karaoke/wav';
 import { cn } from '@/lib/utils';
 
@@ -41,6 +45,18 @@ export function LyricsEditor({ open, onClose }: { open: boolean; onClose: () => 
   const syncingRef = useRef(false);
 
   const parseText = () => {
+    /* v4.0 — autodetect: a pasted LRC/SRT carries real timestamps — keep
+     * them and land straight on the timed sync tab; only genuinely plain
+     * text starts from untimed lines. (parseLrc is total: malformed
+     * input degrades to plain lines, never throws.) */
+    const parsed = parseLrc(raw);
+    const timed = parsed.lines.filter((l) => l.text.trim() && l.time >= 0);
+    if (timed.length >= 3) {
+      setLines(parsed.lines.map((l) => ({ text: l.text, time: l.time >= 0 ? l.time : null })));
+      setCursor(timed.length);
+      setTab('sync');
+      return;
+    }
     const ls = raw
       .split(/\r?\n/)
       .map((l) => l.trim())

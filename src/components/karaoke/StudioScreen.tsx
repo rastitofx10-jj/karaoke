@@ -261,7 +261,7 @@ export function StudioScreen({ onOpenEditor }: { onOpenEditor: () => void }) {
             {recording && <span className="rec-dot kv text-[10px] font-bold text-[var(--crit)]">● REC</span>}
           </button>
 
-          {activeDiscover && <YouTubeStage />}
+          {activeDiscover && <YouTubeStage onOpenEditor={onOpenEditor} />}
           <MicConsole />
           <VocalEnginePanel />
           <RecorderPanel />

@@ -659,6 +659,7 @@ export function useKaraokeEngine() {
         directResolving: false,
         directVideoId: null,
         directChannel: null,
+        fullFailReason: 'none',
       });
 
       /* all three in parallel: sources, lyrics, shell */
@@ -691,6 +692,9 @@ export function useKaraokeEngine() {
           }
           return;
         }
+        /* v4.0 — no sources at all: the resolver found nothing for this
+         * song; the fallback panel explains THAT (not a generic failure) */
+        useKaraoke.getState().patch({ fullFailReason: 'no-sources' });
         if (await shellLoaded()) {
           void this.logPlay(song);
           await this.startPreviewWithLyrics(song, await prepFullPromise);
@@ -996,6 +1000,7 @@ export function useKaraokeEngine() {
         ytIndex: index,
         playing: true,
         pos: 0,
+        fullFailReason: 'none',
       });
       toast.success(t().fullSongReady, { description: cand.channel || cand.title });
       /* the shell may still be landing — full-timeline lyrics attach as
@@ -1058,6 +1063,7 @@ export function useKaraokeEngine() {
           ytActive: false,
           ytVideoId: null,
           ytProbing: false,
+          fullFailReason: 'none',
           song: {
             id: `yt:${pick.videoId}`,
             title: song.title,
@@ -1095,6 +1101,9 @@ export function useKaraokeEngine() {
         ytActive: false,
         ytVideoId: null,
         ytIndex: 0,
+        /* v4.0 — every embeddable check the browser could make failed:
+         * the wall is either this network or these specific videos */
+        fullFailReason: cands.length > 0 ? 'embeds-blocked' : 'no-sources',
       });
       /* tier 2 — the server may still reach sources the browser cannot */
       if (song && (await this.tryDirectAudio(song, cands))) return;

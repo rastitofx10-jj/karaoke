@@ -24,7 +24,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { AlertCircle, AudioLines, Link2, Loader2, Mic2, Music2, RotateCcw, Timer, Volume2, Youtube } from 'lucide-react';
+import { AlertCircle, AudioLines, Link2, Loader2, Mic2, MousePointerClick, Music2, RotateCcw, Timer, Volume2, Youtube, Activity } from 'lucide-react';
 import { toast } from 'sonner';
 import { useKaraoke } from '@/store/karaoke';
 import { useKaraokeEngine, getEngine } from '@/hooks/use-engine';
@@ -32,6 +32,7 @@ import { DICTS } from '@/lib/karaoke/i18n';
 import { createYtPlayer, parseYtId, ytActivePlayer, ytStallFails } from '@/lib/karaoke/yt';
 import type { YtPlayer } from '@/lib/karaoke/yt';
 import type { YtCandidate } from '@/lib/karaoke/discover-types';
+import { NetworkDoctor } from './NetworkDoctor';
 import { cn } from '@/lib/utils';
 
 function fmtSec(s: number): string {
@@ -453,7 +454,7 @@ function YtSession({ videoId }: { videoId: string }) {
 /* the stage panel — resolving row, probe gate, live session, manual    */
 /* ------------------------------------------------------------------ */
 
-export function YouTubeStage() {
+export function YouTubeStage({ onOpenEditor }: { onOpenEditor?: () => void }) {
   const lang = useKaraoke((s) => s.lang);
   const t = DICTS[lang];
   const actions = useKaraokeEngine();
@@ -470,8 +471,11 @@ export function YouTubeStage() {
   const duration = useKaraoke((s) => s.duration);
   const recording = useKaraoke((s) => s.recording);
   const activeDiscover = useKaraoke((s) => s.activeDiscover);
+  const fullFailReason = useKaraoke((s) => s.fullFailReason);
+  const syncState = useKaraoke((s) => s.syncState);
   const [link, setLink] = useState('');
   const [badLink, setBadLink] = useState(false);
+  const [diagOpen, setDiagOpen] = useState(false);
 
   const loadManual = () => {
     const id = parseYtId(link);
@@ -657,21 +661,50 @@ export function YouTubeStage() {
         </div>
       )}
 
-      {/* preview fallback — honest about the 30s and one click from retry */}
+      {/* preview fallback — honest about the 30s, the REASON it happened
+          (v4.0: one law — no-sources / embeds-blocked — spoken to the user),
+          and one click from both the retry and the Network Doctor */}
       {!ytActive && !ytResolving && !ytProbing && !directActive && !directResolving && activeDiscover && (
         <div className="flex flex-col gap-2">
           <div className="flex items-center gap-2 rounded-lg border border-[color-mix(in_srgb,var(--warn)_40%,transparent)] bg-[color-mix(in_srgb,var(--warn)_9%,transparent)] px-3 py-2.5">
             <AlertCircle size={15} className="shrink-0 text-[var(--warn)]" aria-hidden />
-            <span className="text-[11.5px] font-medium text-[var(--dim)]">{t.previewNotice}</span>
+            <div className="min-w-0 flex-1">
+              <p className="text-[11.5px] font-medium text-[var(--dim)]">{t.previewNotice}</p>
+              {fullFailReason !== 'none' && (
+                <p className="mt-0.5 text-[10.5px] font-bold text-[var(--warn)]">
+                  {fullFailReason === 'embeds-blocked' ? t.previewCauseWall : t.previewCauseVideo}
+                </p>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setDiagOpen((v) => !v)}
+              aria-expanded={diagOpen}
+              className="flex min-h-[36px] shrink-0 items-center gap-1.5 rounded-lg border border-[var(--line2)] bg-[var(--panel2)] px-2.5 text-[11px] font-bold text-[var(--dim)] transition-colors hover:text-[var(--text)]"
+            >
+              <Activity size={12} aria-hidden />
+              {t.diag}
+            </button>
             <button
               type="button"
               onClick={() => void actions.retryFullSong()}
-              className="ms-auto flex min-h-[36px] shrink-0 items-center gap-1.5 rounded-lg border border-[color-mix(in_srgb,var(--warn)_55%,transparent)] bg-[var(--panel2)] px-2.5 text-[11px] font-bold text-[var(--warn)] transition-colors hover:bg-[color-mix(in_srgb,var(--warn)_15%,transparent)]"
+              className="flex min-h-[36px] shrink-0 items-center gap-1.5 rounded-lg border border-[color-mix(in_srgb,var(--warn)_55%,transparent)] bg-[var(--panel2)] px-2.5 text-[11px] font-bold text-[var(--warn)] transition-colors hover:bg-[color-mix(in_srgb,var(--warn)_15%,transparent)]"
             >
               <RotateCcw size={12} aria-hidden />
               {t.retryFull}
             </button>
           </div>
+          {diagOpen && <NetworkDoctor onClose={() => setDiagOpen(false)} />}
+          {syncState === 'plain' && (
+            <button
+              type="button"
+              onClick={onOpenEditor}
+              className="flex min-h-[38px] items-center justify-center gap-2 rounded-lg border border-dashed border-[color-mix(in_srgb,var(--b)_45%,transparent)] bg-[var(--b-soft)] px-3 text-[11.5px] font-bold text-[var(--b)] transition-colors hover:bg-[color-mix(in_srgb,var(--b)_15%,transparent)]"
+            >
+              <MousePointerClick size={13} aria-hidden />
+              {t.tapSyncCta}
+            </button>
+          )}
         </div>
       )}
 

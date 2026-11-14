@@ -1,11 +1,11 @@
-# TITO KARAOKE STUDIO · v3.4 — FULL SONGS, VERIFIED
+# TITO KARAOKE STUDIO · v4.0 — THE TRANSPARENT MACHINE
 
-**אולפן קריוקי מקצועי שלם, בדפדפן. חיפוש שיר → שיר מלא שמאומת בפועל → מילים מסונכרנות → שירה.**
-A complete professional karaoke studio that runs entirely in the browser. Search a song, get the **full song** — verified to actually play before it ever reaches your ears — with **time-synced lyrics**, and sing. Every sample, every pitch, every score computed on your machine.
+**אולפן קריוקי מקצועי שלם, בדפדפן. חיפוש שיר → שיר מלא שמאומת בפועל → מילים מסונכרנות → שירה. וכשמשהו חסום — המכונה אומרת לכם בדיוק מה, למה, ומה עושים עכשיו.**
+A complete professional karaoke studio that runs entirely in the browser. Search a song, get the **full song** — verified to actually play before it ever reaches your ears — with **time-synced lyrics**, and sing. And when something is blocked, the machine **tells you exactly what, why, and what to do next** — the Network Doctor pings every provider live and speaks the verdict in one sentence.
 
 ---
 
-## THE GOLDEN PATH (v3.4 — evidence-backed, tiered)
+## THE GOLDEN PATH (v4.0 — evidence-backed, tiered, transparent)
 
 1. **Search** — the iTunes catalog (millions of songs, official artwork + metadata) plus live local charts.
 2. **The probe gate** — the server ranks up to 12 full-length YouTube sources; the browser then mounts tiny **muted probe players in parallel waves** and keeps only a source whose clock actually moves. A source that plays silently/bot-walled never passes; a source that plays is promoted instantly. This is the only reliable embeddability check in existence — server-side probes (oEmbed etc.) return "embeddable" for videos the player then rejects with error 150.
@@ -13,7 +13,11 @@ A complete professional karaoke studio that runs entirely in the browser. Search
 4. **The direct-audio tier** — if the iframe route is blocked (embed-disabled or datacenter walls), the server itself resolves a direct audio stream (visionos innertube client — cipher-free googlevideo URLs) and **proxies the bytes**. The track is decoded into Web Audio, which unlocks the **whole karaoke machine on the full song**: vocal removal, singer isolation, key shift, speed, melody scan, scoring, A-B loop, recording — none of which can process iframe audio.
 5. **Lyrics in place** — LRCLIB synced lyrics on the song's original timeline across all three tiers; every stale timeline is dropped at the state machine (clip words can never land on a full song and vice versa). **±0.25 s calibration** for intro drift.
 6. **Original ⇄ Karaoke version** — one toggle re-resolves the backing track to instrumental karaoke uploads (no lead vocals).
-7. **Honest fallback** — both tiers blocked? A clear 30-second-preview notice with a **"try the full song again"** door, clip-synced lyrics, and a manual-paste field that itself falls back through the direct tier. The stage never sits silent, never lies, never surprises you with a 29-second song pretending to be a song.
+7. **Honest fallback — v4.0 makes it TRANSPARENT** — both tiers blocked? A clear 30-second-preview notice that **names the actual reason** ("this network is likely blocked by YouTube" vs "the videos found for this song are not embeddable"), plus:
+   - **THE NETWORK DOCTOR** — one click pings LRCLIB, NetEase, iTunes, the in-browser YouTube player (a real muted probe) and the direct-audio tier, and renders each with a status dot + latency. The verdict is one honest sentence with the next action: paste a link / import a file / tap-sync lyrics. No more silent mysteries — a wall is named, measured and routed around.
+   - **Tap-sync CTA** — when a song only has plain lyrics, the stage invites you to tap your own sync in the editor (one minute to karaoke).
+   - **LRC autodetect** — paste an LRC/SRT into the editor and the timestamps are kept (previously flattened to plain text — a real LRC could not be re-loaded through the editor).
+   - Manual-paste field, retry door, clip-synced lyrics. The stage never sits silent, never lies, never surprises you with a 29-second song pretending to be a song.
 8. Sing — mic console, vocal engine, live pitch, scoring, recording. Everything below still applies.
 
 ---

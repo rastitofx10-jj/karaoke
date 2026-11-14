@@ -154,7 +154,7 @@ export function KaraokeApp() {
           </span>
         </button>
         <span className="kv hidden rounded border border-[var(--line2)] bg-[var(--well)] px-1.5 py-px text-[9px] text-[var(--faint)] sm:inline">
-          v3.5 · CLIENT ROTATION + LYRIC CASCADE
+          v4.0 · TRANSPARENT MACHINE — NETWORK DOCTOR
         </span>
 
         <span className="flex-1" />

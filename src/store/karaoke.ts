@@ -87,6 +87,11 @@ interface KaraokeState {
   directVideoId: string | null;
   directChannel: string | null;
 
+  /* v4.0 — WHY the last full-song attempt landed on the preview: the
+   * Network Doctor and the fallback panel speak this reason to the user
+   * instead of a generic "did not load". One law, one source. */
+  fullFailReason: 'none' | 'no-sources' | 'embeds-blocked';
+
   /* song */
   song: UiSong | null;
   loadingFile: boolean;
@@ -168,6 +173,7 @@ export const useKaraoke = create<KaraokeState>((set) => ({
   directResolving: false,
   directVideoId: null,
   directChannel: null,
+  fullFailReason: 'none' as const,
 
   song: null,
   loadingFile: false,
