@@ -3,6 +3,31 @@
  * tiny pure helpers only — safe to import from anywhere.
  */
 
+/**
+ * v5.0 — a verified FULL-LENGTH playback source (SoundCloud / Audius).
+ * SoundCloud hosts millions of full-length covers, remixes and instrumentals
+ * (policy ALLOW, not snipped); Audius hosts a full decentralized catalog.
+ * Both stream fine from the server and are proxied same-origin to the
+ * browser, then decoded into Web Audio — the whole karaoke DSP chain
+ * (vocal removal, key shift, scoring) runs on the FULL song.
+ */
+export interface FullSource {
+  /** 'soundcloud' | 'audius' */
+  provider: 'soundcloud' | 'audius';
+  /** Provider track id (number as string). */
+  id: string;
+  /** Track title on the provider (may be "Believer - Metal Cover"). */
+  title: string;
+  /** Uploader / artist on the provider. */
+  artist: string;
+  /** FULL duration in ms (>= 60s, guaranteed). */
+  durationMs: number;
+  /** Higher = better match to the catalog song (title/artist/duration). */
+  score: number;
+  /** True when this is the exact original recording (not a cover). */
+  original?: boolean;
+}
+
 /** One searchable/streamable song coming from the iTunes catalog. */
 export interface DiscoverSong {
   /** Stable key: `itunes:{trackId}` — also used as the library record id. */
@@ -15,7 +40,7 @@ export interface DiscoverSong {
   artwork: string;
   /** 200x200 artwork URL (lists). */
   artworkSmall: string;
-  /** Official 30s preview clip (Apple CDN, m4a). */
+  /** Official 30s preview clip (Apple CDN, m4a). '' for standalone provider rows. */
   previewUrl: string;
   /** FULL song duration in ms (the clip itself is ~30s). */
   durationMs: number;
@@ -24,6 +49,13 @@ export interface DiscoverSong {
   hasLrc: boolean;
   /** Only for "hot in app" results — play count. */
   plays?: number;
+  /** v5.0 — verified full-length sources matched to this song. */
+  fullSources?: FullSource[];
+  /** v5.0 — for standalone provider rows (`sc:{id}`): the artist/title to
+   * search on LRCLIB (parsed from the cover title, e.g. "Imagine Dragons" +
+   * "Believer"). Undefined for plain iTunes rows. */
+  lrcArtist?: string;
+  lrcTitle?: string;
 }
 
 export type HotSong = DiscoverSong & { plays: number };

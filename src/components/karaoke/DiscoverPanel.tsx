@@ -45,13 +45,19 @@ function SongRow({ song, rank }: { song: DiscoverSong; rank?: number }) {
       className="group flex w-full items-center gap-2.5 rounded border border-transparent p-1.5 text-start transition-all hover:border-[var(--line)] hover:bg-[var(--panel2)] focus-visible:border-[var(--a)] disabled:cursor-wait disabled:opacity-60"
     >
       <span className="relative h-11 w-11 shrink-0 overflow-hidden rounded border border-[var(--line)] bg-[var(--well)]">
-        <img
-          src={song.artworkSmall || song.artwork}
-          alt=""
-          loading="lazy"
-          decoding="async"
-          className="h-full w-full object-cover"
-        />
+        {song.artworkSmall || song.artwork ? (
+          <img
+            src={song.artworkSmall || song.artwork}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            className="h-full w-full object-cover"
+          />
+        ) : (
+          <span className="flex h-full w-full items-center justify-center">
+            <Music2 size={16} aria-hidden className="text-[var(--faint)]" />
+          </span>
+        )}
         <span className="absolute inset-0 flex items-center justify-center bg-black/60 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
           {busy ? (
             <Loader2 size={15} className="animate-spin text-[var(--a)]" />
@@ -69,6 +75,14 @@ function SongRow({ song, rank }: { song: DiscoverSong; rank?: number }) {
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5">
           <span className="truncate text-[12px] font-bold text-[var(--text)]">{song.title}</span>
+          {(song.fullSources?.length ?? 0) > 0 && (
+            <span
+              className="kv flex shrink-0 items-center rounded-full border border-[color-mix(in_srgb,var(--good)_45%,transparent)] bg-[color-mix(in_srgb,var(--good)_12%,transparent)] px-1.5 py-px text-[8.5px] font-black text-[var(--good)]"
+              title={t.fullHint}
+            >
+              {t.fullBadge}
+            </span>
+          )}
           {song.hasLrc && (
             <span className="flex shrink-0 items-center gap-0.5 rounded-full bg-[var(--a-soft)] px-1.5 py-px text-[8.5px] font-black text-[var(--a)]">
               <Sparkles size={8} aria-hidden />

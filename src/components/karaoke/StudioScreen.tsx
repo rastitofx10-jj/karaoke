@@ -32,6 +32,10 @@ export function StudioScreen({ onOpenEditor }: { onOpenEditor: () => void }) {
   const ytActive = useKaraoke((s) => s.ytActive);
   const directActive = useKaraoke((s) => s.directActive);
   const directResolving = useKaraoke((s) => s.directResolving);
+  const fullActive = useKaraoke((s) => s.fullActive);
+  const fullResolving = useKaraoke((s) => s.fullResolving);
+  const fullProvider = useKaraoke((s) => s.fullProvider);
+  const fullChannel = useKaraoke((s) => s.fullChannel);
   const micActive = useKaraoke((s) => s.micActive);
   const recording = useKaraoke((s) => s.recording);
   const liveScore = useKaraoke((s) => s.liveScore);
@@ -43,7 +47,10 @@ export function StudioScreen({ onOpenEditor }: { onOpenEditor: () => void }) {
   const lyricsProvider = useKaraoke((s) => s.lyricsProvider);
   /* the preview badge only appears once the session is really preview-only */
   const showPreviewBadge = Boolean(
-    activeDiscover && !ytActive && !ytResolving && !ytProbing && !directActive && !directResolving,
+    activeDiscover &&
+      !ytActive && !ytResolving && !ytProbing &&
+      !directActive && !directResolving &&
+      !fullActive && !fullResolving,
   );
 
   return (
@@ -90,6 +97,20 @@ export function StudioScreen({ onOpenEditor }: { onOpenEditor: () => void }) {
           {ytActive && (
             <span className="kv rounded-full border border-[color-mix(in_srgb,var(--b)_50%,transparent)] bg-[var(--b-soft)] px-2 py-0.5 text-[10px] font-bold text-[var(--b)]">
               {t.fullSong}
+            </span>
+          )}
+          {fullActive && (
+            <span
+              className="kv rounded-full border border-[color-mix(in_srgb,var(--good)_50%,transparent)] bg-[color-mix(in_srgb,var(--good)_12%,transparent)] px-2 py-0.5 text-[10px] font-bold text-[var(--good)]"
+              title={fullChannel ? `${t.fullHint}${fullChannel ? ` · ${fullChannel}` : ''}` : t.fullHint}
+            >
+              {fullProvider === 'audius' ? t.fullLiveAu : t.fullLiveSc}
+            </span>
+          )}
+          {fullResolving && !fullActive && (
+            <span className="flex items-center gap-1 rounded-full border border-[color-mix(in_srgb,var(--good)_50%,transparent)] bg-[color-mix(in_srgb,var(--good)_12%,transparent)] px-2 py-0.5 text-[10px] font-bold text-[var(--good)]">
+              <Loader2 size={10} className="animate-spin" aria-hidden />
+              {t.fullDownloading}
             </span>
           )}
           {directActive && (

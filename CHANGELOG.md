@@ -1,5 +1,88 @@
 # TITO KARAOKE STUDIO — Changelog
 
+## 5.0 — FULL SONGS, ALWAYS: SOUNDCLOUD + AUDIUS (2026-11-14)
+
+The "it finally just works" release. The core complaint since v2.0 — "only a
+30-second clip plays, the full song never loads" — is structurally fixed:
+full-length playback no longer depends on YouTube at all.
+
+### THE PROBLEM (measured from this machine)
+
+- **YouTube embeds** — blocked on the user's network; the browser probe gate
+  honestly reported "this network is likely blocked by YouTube" (v4.0) but the
+  user still got a 30s preview as the only music.
+- **YouTube direct audio (innertube)** — Google now requires PO tokens from
+  datacenter IPs: ANDROID returns FAILED_PRECONDITION, every public Piped
+  instance returns "Sign in to confirm you're not a bot". Tier dead.
+- **NetEase outer URL** — redirects to a 404 page. Anonymous player URLs give
+  `url: null`. Dead.
+- **Archive.org** — connection refused from this network. Dead.
+
+### THE FIX: two independent FULL-LENGTH catalogs, both verified live
+
+- **SoundCloud** — millions of full-length covers, remixes and instrumentals
+  (policy ALLOW, not snipped). Anonymous web client_id **extracted live from
+  soundcloud.com's JS bundles** (cached 6h, auto re-extracted on auth failure,
+  hard-coded fallback), search via `api-v2.soundcloud.com/search` with a
+  strict full-track filter (policy ALLOW, duration ≥ 60s, `duration ≥
+  full_duration × 0.95`, at least one non-snipped transcoding). Streams:
+  progressive transcodings pass through directly; **HLS playlists (init.mp4 +
+  dataNNN.m4s) are fetched server-side and concatenated in order** into one
+  fMP4 the browser decodes in a single `decodeAudioData` — verified: a 3:35
+  cover arrives as 4.35MB valid MP4 in 5.8s and **decodes natively in Chrome
+  without the ffmpeg fallback** (which exists anyway: `/fullstream?transcode=1`
+  → 192k mp3).
+- **Audius** — decentralized catalog, free discovery API, full-length mp3s
+  via the `/v1/tracks/{id}/stream` redirect. Deleted tracks leak into search
+  results and 404 on stream — filtered by `is_streamable`/`is_delete`.
+- **Matching** — provider tracks are scored against catalog rows (title token
+  coverage ≥ 0.65, artist overlap, duration ratio 0.65–1.45; nightcore/sped/
+  8d/mashup penalized) and attached as `fullSources` (top 3 per song). Strong
+  unmatched full tracks become **standalone rows** (guaranteed full, with
+  LRCLIB hints parsed from cover titles: "Artist - Song (Cover by X)").
+- **All bytes flow same-origin** through `/api/discover/fullstream` — the
+  server does every bit of external talking (client_id, signed playlists,
+  segments), so the user's blocked network can't stand between them and the
+  music. Byte-level LRU (8 tracks) makes replays instant.
+
+### THE NEW TIER ORDER (loadDiscoverSong)
+
+1. **Full-length source** (search-time list or fresh `/fullsong` resolve) →
+   download → decode into Web Audio → `engine.loadSong` → **the whole karaoke
+   machine (vocal removal, key shift, speed, melody scan, scoring, recording)
+   runs on the REAL FULL SONG**. The 30s shell is now LAZY — it only
+   downloads when a fallback needs it, so a playing full song is never
+   replaced mid-flight.
+2. YouTube embeds (probe gate) — kept warm in parallel, used only if tier 1
+   finds nothing.
+3. 30s preview — honestly labeled, with the real reason + one-click retry
+   (which now retries tier 1 first).
+
+### UI (the approved look, untouched — only additions)
+
+- Green **FULL** badge on every catalog card/row with verified full-length
+  sources (HE: מלא).
+- Studio chips: **שיר מלא · SOUNDCLOUD / FULL SONG · AUDIUS** while a full
+  song owns the clock, a spinner while it downloads, source + duration line.
+- Standalone SC rows get an artwork placeholder (no more empty `src=""`).
+- `overflow-x-clip` on the root — icon SVG paths could inflate scrollWidth on
+  narrow screens; the page never side-scrolls now.
+- v4.0 bug fixed: the "off" button never paused the engine (`seek()` alone
+  doesn't pause) — a direct/full song kept playing after "off".
+
+### VERIFIED END-TO-END (agent-browser, from this machine)
+
+- Search "believer imagine dragons" → 16/26 cards with FULL badges.
+- Click Believer → **SoundCloud full song (3:26) plays inside Web Audio**,
+  YouTube skipped entirely, LRCLIB synced lyrics line-highlighting exact
+  ("[00:51.45] Seeing the beauty through the…" active at pos 52.3s), played
+  **to natural end (pos 206/206)**.
+- Click Counting Stars → **Audius full song (3:46)** plays instantly,
+  synced lyrics, audio level 0.8 — both providers verified in the browser.
+- Single fullstream request per song (native fMP4 decode, no transcode
+  needed), zero console errors after fixes, EN/HE both live, mobile 390px
+  clean (no side-scroll, vertical scroll intact).
+
 ## 3.5 — THE HUNTER RELEASE: CLIENT ROTATION + LYRIC CASCADE (2026-11-14)
 
 The "execute with the hunter" release. The hunter's methodology (mine the

@@ -130,7 +130,9 @@ export function KaraokeApp() {
   return (
     <div
       className={cn(
-        'flex min-h-screen flex-col bg-[var(--ink)]',
+        /* v5.0 — overflow-x-clip: decorative SVG paths (icons) can inflate
+         * scrollWidth on narrow screens; the page must never side-scroll */
+        'flex min-h-screen flex-col overflow-x-clip bg-[var(--ink)]',
         /* studio is a fixed-height console on desktop: tools scroll inside,
          * the stage + transport always fit the viewport. Home scrolls free. */
         inStudio && 'lg:h-screen lg:overflow-hidden',
@@ -154,7 +156,7 @@ export function KaraokeApp() {
           </span>
         </button>
         <span className="kv hidden rounded border border-[var(--line2)] bg-[var(--well)] px-1.5 py-px text-[9px] text-[var(--faint)] sm:inline">
-          v4.0 · TRANSPARENT MACHINE — NETWORK DOCTOR
+          v5.0 · FULL SONGS, ALWAYS — SOUNDCLOUD · AUDIUS
         </span>
 
         <span className="flex-1" />

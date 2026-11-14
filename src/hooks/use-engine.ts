@@ -19,7 +19,7 @@ import {
 import { useKaraoke } from '@/store/karaoke';
 import { DICTS } from '@/lib/karaoke/i18n';
 import type { LrcSong, RankKey, ScoreResult, TakeMeta, VocalMode } from '@/lib/karaoke/types';
-import type { DiscoverSong, HotSong, PrepareResult, YtCandidate } from '@/lib/karaoke/discover-types';
+import type { DiscoverSong, FullSource, HotSong, PrepareResult, YtCandidate } from '@/lib/karaoke/discover-types';
 import { ytActivePlayer, ytStallFails } from '@/lib/karaoke/yt';
 
 let engine: KaraokeEngine | null = null;
@@ -58,14 +58,16 @@ async function fetchAudioFile(song: DiscoverSong): Promise<File> {
 }
 
 /** Lyrics for a catalog song (never throws).
- *  mode 'full' — the full-song LRC, original timeline (YouTube playback).
- *  mode 'preview' — clip-timeline LRC via the AI preview sync (30s fallback). */
+ *  mode 'full' — the full-song LRC, original timeline (full-song playback).
+ *  mode 'preview' — clip-timeline LRC via the AI preview sync (30s fallback).
+ *  v5.0 — standalone provider rows carry LRCLIB hints parsed from their
+ *  cover titles (lrcTitle/lrcArtist); they win over the raw display name. */
 async function fetchPrepare(song: DiscoverSong, mode: 'full' | 'preview'): Promise<PrepareResult | null> {
   try {
     const qs = new URLSearchParams({
       trackId: String(song.trackId),
-      artist: song.artist,
-      title: song.title,
+      artist: song.lrcArtist ?? song.artist,
+      title: song.lrcTitle ?? song.title,
       album: song.album,
       durationMs: String(song.durationMs),
       mode,
@@ -103,6 +105,58 @@ async function fetchYtCandidates(
       : [];
   } catch {
     return [];
+  }
+}
+
+/** v5.0 — fresh full-length sources (SoundCloud/Audius) for a catalog song,
+ *  resolved server-side at load time (never throws). */
+async function fetchFullSongSources(song: DiscoverSong): Promise<FullSource[]> {
+  try {
+    const qs = new URLSearchParams({
+      artist: song.artist,
+      title: song.title,
+      durationMs: String(Math.max(0, Math.round(song.durationMs)) || 0),
+    });
+    const res = await fetch(`/api/discover/fullsong?${qs.toString()}`);
+    if (!res.ok) return [];
+    const data = (await res.json()) as { sources?: FullSource[] };
+    return Array.isArray(data.sources)
+      ? data.sources.filter(
+          (s) => s && (s.provider === 'soundcloud' || s.provider === 'audius') && s.id && s.durationMs >= 60_000,
+        )
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+/** v5.0 — download + decode one full-length source into a Web Audio buffer.
+ *  The raw bytes are an fMP4 concat (SoundCloud HLS) or mp3 (Audius); when
+ *  the browser's decoder rejects the raw container, one retry with a
+ *  server-side ffmpeg transcode settles it. Total: never throws. */
+async function fetchFullAudioBuffer(source: FullSource): Promise<AudioBuffer | null> {
+  const base = `/api/discover/fullstream?p=${source.provider === 'soundcloud' ? 'sc' : 'au'}&id=${encodeURIComponent(source.id)}`;
+  let buf: ArrayBuffer | null = null;
+  try {
+    const res = await fetch(base);
+    if (res.ok) buf = await res.arrayBuffer();
+  } catch {
+    buf = null;
+  }
+  if (!buf || buf.byteLength < 250_000) return null;
+  try {
+    return await decodeAudioData(buf);
+  } catch {
+    /* container the browser can't decode → ffmpeg fallback (mp3) */
+  }
+  try {
+    const res2 = await fetch(`${base}&transcode=1`);
+    if (!res2.ok) return null;
+    const buf2 = await res2.arrayBuffer();
+    if (buf2.byteLength < 250_000) return null;
+    return await decodeAudioData(buf2);
+  } catch {
+    return null;
   }
 }
 
@@ -219,6 +273,11 @@ export function useKaraokeEngine() {
           ytCandidates: [],
           ytIndex: 0,
           ytResolving: false,
+          fullActive: false,
+          fullResolving: false,
+          fullId: null,
+          fullProvider: null,
+          fullChannel: null,
         });
         // persist to the library
         await dbReady();
@@ -274,6 +333,11 @@ export function useKaraokeEngine() {
           ytCandidates: [],
           ytIndex: 0,
           ytResolving: false,
+          fullActive: false,
+          fullResolving: false,
+          fullId: null,
+          fullProvider: null,
+          fullChannel: null,
         });
       } catch {
         toast.error(t().error, { description: rec.title });
@@ -624,16 +688,18 @@ export function useKaraokeEngine() {
     },
 
     /**
-     * THE GOLDEN PATH (v3.2): full songs first, lyrics right behind, zero wait.
-     *   1. in parallel: full-song sources (server ranking + embed probe),
-     *      full-song lyrics (LRCLIB) and the 30s shell (fallback surface);
-     *   2. sources found → the YT session starts THE MOMENT they arrive —
-     *      the shell keeps loading in the background, never blocks the music;
-     *   3. lyrics attach right after the shell lands (they live on the
-     *      engine's song object), on the full-song timeline;
-     *   4. no source / every source fails → the 30s preview + AI-synced
-     *      clip lyrics (v2.0 behavior) with a clear "try the full song
-     *      again" door.
+     * THE GOLDEN PATH (v5.0): REAL FULL SONGS, ALWAYS FIRST.
+     *   1. in parallel: full-length sources (search-time list, or a fresh
+     *      server resolve), full-song lyrics (LRCLIB) and the YouTube
+     *      candidate list (kept warm as tier 2);
+     *   2. full sources found → the best one downloads + decodes into Web
+     *      Audio THE MOMENT it lands — the whole karaoke machine (vocal
+     *      removal, key shift, speed, scoring) runs on the FULL song;
+     *   3. no full source / every download failed → the YouTube flow
+     *      (probe gate → direct audio), then the 30s preview shell —
+     *      each fallback labeled honestly.
+     * The 30s shell is LAZY: it only downloads when the preview fallback
+     * needs it, so a playing full song is never replaced mid-flight.
      */
     async loadDiscoverSong(song: DiscoverSong) {
       const st0 = useKaraoke.getState();
@@ -659,31 +725,49 @@ export function useKaraokeEngine() {
         directResolving: false,
         directVideoId: null,
         directChannel: null,
+        fullActive: false,
+        fullResolving: true,
+        fullId: null,
+        fullProvider: null,
+        fullChannel: null,
         fullFailReason: 'none',
       });
 
-      /* all three in parallel: sources, lyrics, shell */
-      const ytPromise = fetchYtCandidates(song, useKaraoke.getState().ytVariant);
+      /* tier 1 — full-length sources: the search-time list, or a fresh
+       * server resolve when this row arrived before v5.0 / via a share */
+      const fullSourcesP =
+        song.fullSources && song.fullSources.length > 0
+          ? Promise.resolve(song.fullSources.slice(0, 3))
+          : fetchFullSongSources(song);
+      /* full-timeline lyrics — they attach the moment a full song owns the clock */
       const prepFullPromise = fetchPrepare(song, 'full');
-      const shellPromise = this.ensureShell(song).catch(() => null);
+      /* tier 2 — YouTube candidates kept warm (probe gate runs only if tier 1 fails) */
+      const ytPromise = fetchYtCandidates(song, useKaraoke.getState().ytVariant);
+      /* the 30s shell is LAZY — started only when a fallback needs it */
+      let shellStarted: Promise<void> | null = null;
+      const ensureShellOnce = (): Promise<void> => {
+        if (!shellStarted) shellStarted = this.ensureShell(song).catch(() => undefined);
+        return shellStarted;
+      };
 
       try {
-        /* the full song starts the moment sources are known — the shell
-         * (30s fallback + melody + the lyrics' home) never stands between
-         * the user and the music. If the shell download failed once, one
-         * retry: without it there is nowhere to hang the lyrics. */
-        const shellId = `itunes:${song.trackId}`;
-        const shellLoaded = async (): Promise<boolean> => {
-          await shellPromise;
-          if (getEngine().song?.id === shellId) return true;
-          await this.ensureShell(song).catch(() => null);
-          return getEngine().song?.id === shellId;
-        };
+        /* ---------- TIER 1: the full-length song, decoded into the engine */
+        const sources = await fullSourcesP;
+        if (sources.length > 0 && (await this.tryFullAudio(song, sources))) {
+          void this.logPlay(song);
+          this.applyPrepare(await prepFullPromise, 'full', song);
+          return;
+        }
 
+        /* ---------- TIER 2: YouTube embeds (probe gate → direct audio) */
         const yt = await ytPromise;
         if (yt.length > 0) {
           this.ytAutoStart(yt);
           void this.logPlay(song);
+          const shellLoaded = async (): Promise<boolean> => {
+            await ensureShellOnce();
+            return getEngine().song?.id === `itunes:${song.trackId}`;
+          };
           if (await shellLoaded()) {
             this.applyPrepare(await prepFullPromise, 'full', song);
           } else {
@@ -692,10 +776,13 @@ export function useKaraokeEngine() {
           }
           return;
         }
-        /* v4.0 — no sources at all: the resolver found nothing for this
-         * song; the fallback panel explains THAT (not a generic failure) */
+
+        /* ---------- TIER 3: honestly-labeled 30s preview */
         useKaraoke.getState().patch({ fullFailReason: 'no-sources' });
-        if (await shellLoaded()) {
+        const shellOk = await ensureShellOnce().then(
+          () => getEngine().song?.id === `itunes:${song.trackId}`,
+        );
+        if (shellOk) {
           void this.logPlay(song);
           await this.startPreviewWithLyrics(song, await prepFullPromise);
         } else {
@@ -708,6 +795,68 @@ export function useKaraokeEngine() {
       } finally {
         useKaraoke.getState().patch({ discoverBusyId: null, loadingFile: false, ytResolving: false });
       }
+    },
+
+    /**
+     * v5.0 — TIER 1: download + decode a full-length source (SoundCloud /
+     * Audius) and load it into the engine as a REAL full-length AudioBuffer.
+     * The Web Audio graph owns the clock: vocal removal, key shift, speed,
+     * melody scan, scoring and recording all run on the FULL song. Tries
+     * sources in rank order; returns true when a full song now owns the
+     * clock. Total: never throws, never leaves partial state.
+     */
+    async tryFullAudio(song: DiscoverSong, sources: FullSource[]): Promise<boolean> {
+      for (const src of sources.slice(0, 3)) {
+        if (useKaraoke.getState().activeDiscover?.id !== song.id) return false; // session moved on
+        useKaraoke.getState().patch({ fullResolving: true });
+        try {
+          const audio = await fetchFullAudioBuffer(src);
+          /* a REAL full song or nothing — 30s junk never owns the clock */
+          if (!audio || audio.duration < 60) continue;
+          if (useKaraoke.getState().activeDiscover?.id !== song.id) return false;
+
+          const e = getEngine();
+          e.ytPos = null;
+          const id = `${src.provider === 'soundcloud' ? 'sc' : 'au'}:${src.id}`;
+          const loaded = e.loadSong(id, song.title, audio, { artist: song.artist });
+          useKaraoke.getState().patch({
+            fullActive: true,
+            fullId: id,
+            fullProvider: src.provider,
+            fullChannel: src.artist,
+            fullResolving: false,
+            ytActive: false,
+            ytVideoId: null,
+            ytProbing: false,
+            ytResolving: false,
+            directActive: false,
+            fullFailReason: 'none',
+            song: {
+              id,
+              title: song.title,
+              artist: song.artist,
+              durationSec: audio.duration,
+              hasLrc: false,
+              hasMelody: false,
+            },
+            playing: false,
+            pos: 0,
+            duration: audio.duration,
+            /* the full song's own peaks — the preview's don't map */
+            peaks: loaded.peaks,
+          });
+          void e.play();
+          toast.success(t().fullSongReady, {
+            description: `${src.artist} · ${t().fullVia} ${src.provider === 'soundcloud' ? 'SoundCloud' : 'Audius'}`,
+          });
+          return true;
+        } catch {
+          /* next source */
+        } finally {
+          useKaraoke.getState().patch({ fullResolving: false });
+        }
+      }
+      return false;
     },
 
     /** Put the 30s clip into the engine as the session shell: library blob
@@ -800,15 +949,17 @@ export function useKaraokeEngine() {
       const e = getEngine();
       if (!e.song) return;
       const st0 = useKaraoke.getState();
-      /* the lyrics live on the engine's song — either the itunes shell or
-       * the direct-audio full song (v3.4) — anything else is stale */
+      /* the lyrics live on the engine's song — either the itunes shell, the
+       * v5.0 full-length song (sc:/au:), or the direct-audio full song
+       * (v3.4) — anything else is stale */
       const shellOk =
         e.song.id === `itunes:${song.trackId}` ||
+        (st0.fullActive && e.song.id === st0.fullId) ||
         (st0.directActive && e.song.id === `yt:${st0.directVideoId}`);
       if (!shellOk) return;
       /* full means: the session is (or will be, once probing ends) on the
        * full-song timeline. preview means the 30s clip owns the clock NOW. */
-      const fullTimeline = st0.ytActive || st0.ytProbing || st0.directActive;
+      const fullTimeline = st0.ytActive || st0.ytProbing || st0.directActive || st0.fullActive;
       if (fullTimeline && mode === 'preview') return; // stale clip timeline
       if (!fullTimeline && mode === 'full') {
         /* probing just ended in a fallback — the gate cleared ytProbing and
@@ -817,11 +968,11 @@ export function useKaraokeEngine() {
       }
       const st = useKaraoke.getState();
       if (prep?.lrc) {
-        /* v3.4 — in direct mode the decoded buffer IS ground truth; the
+        /* the decoded buffer IS ground truth (full-tier / direct mode); the
          * YT session keeps the iTunes duration (refreshed from the player) */
         const dur =
           mode === 'full'
-            ? st0.directActive
+            ? st0.fullActive || st0.directActive
               ? e.duration
               : prep.fullDurationSec ?? (song.durationMs > 0 ? song.durationMs / 1000 : 0)
             : e.duration;
@@ -935,6 +1086,9 @@ export function useKaraokeEngine() {
         }
       } else {
         e.ytPos = null;
+        /* v5.0 — actually stop the engine too: seek() alone never pauses,
+         * so the direct/full song kept playing after "off" (v4.0 bug) */
+        e.pause();
         useKaraoke.getState().patch({
           ytActive: false,
           ytVideoId: null,
@@ -946,6 +1100,11 @@ export function useKaraokeEngine() {
           directResolving: false,
           directVideoId: null,
           directChannel: null,
+          fullActive: false,
+          fullResolving: false,
+          fullId: null,
+          fullProvider: null,
+          fullChannel: null,
           playing: false,
         });
         if (e.song) {
@@ -1118,18 +1277,19 @@ export function useKaraokeEngine() {
       } else this.setYt(null, { resumePreview: false });
     },
 
-    /** Attach the FULL-timeline lyrics to the live session. Serves the YT
-     * iframe session, the probe phase AND the direct-audio tier: full
-     * lyrics wait while probing, attach when a full song owns the clock.
-     * Total: never throws, self-guarded against mode races. */
+    /** Attach the FULL-timeline lyrics to the live session. Serves the
+     * full-length tier (v5.0), the YT iframe session, the probe phase AND
+     * the direct-audio tier: full lyrics wait while probing, attach when a
+     * full song owns the clock. Total: never throws, self-guarded. */
     async attachFullLyrics(song: DiscoverSong) {
       const e = getEngine();
       const st = useKaraoke.getState();
       const idOk =
         e.song?.id === `itunes:${song.trackId}` ||
+        (st.fullActive && e.song?.id === st.fullId) ||
         (st.directActive && e.song?.id === `yt:${st.directVideoId}`);
       if (!idOk) return;
-      if (!st.ytActive && !st.ytProbing && !st.directActive) return; // a full song must own the clock
+      if (!st.ytActive && !st.ytProbing && !st.directActive && !st.fullActive) return; // a full song must own the clock
       const prep = await fetchPrepare(song, 'full');
       this.applyPrepare(prep, 'full', song); // drops itself if the mode flipped
     },
@@ -1158,22 +1318,34 @@ export function useKaraokeEngine() {
     },
 
     /** Re-resolve full-song sources after a fallback (the "try again"
-     * button) — bypasses the empty-result cache. */
+     * button) — bypasses the empty-result cache. v5.0: the full-length
+     * tier (SoundCloud/Audius) retries FIRST; YouTube only after it. */
     async retryFullSong() {
       const song = useKaraoke.getState().activeDiscover;
       if (!song || useKaraoke.getState().ytResolving) return;
-      useKaraoke.getState().patch({ ytResolving: true });
-      const variant = useKaraoke.getState().ytVariant;
-      const yt = await fetchYtCandidates(song, variant, true);
-      if (yt.length > 0) {
-        this.pause();
-        this.ytAutoStart(yt);
-        /* the preview fallback left clip-timeline lyrics on the stage —
-         * the full song needs its own timeline back */
-        void this.attachFullLyrics(song);
-      } else {
+      useKaraoke.getState().patch({ ytResolving: true, fullFailReason: 'none' });
+      try {
+        /* tier 1 — a fresh full-length resolve, cache bypassed */
+        const sources = await fetchFullSongSources(song);
+        if (sources.length > 0 && (await this.tryFullAudio(song, sources))) {
+          void this.attachFullLyrics(song);
+          return;
+        }
+        /* tier 2 — YouTube with a fresh resolve */
+        const variant = useKaraoke.getState().ytVariant;
+        const yt = await fetchYtCandidates(song, variant, true);
+        if (yt.length > 0) {
+          this.pause();
+          this.ytAutoStart(yt);
+          /* the preview fallback left clip-timeline lyrics on the stage —
+           * the full song needs its own timeline back */
+          void this.attachFullLyrics(song);
+        } else {
+          useKaraoke.getState().patch({ fullFailReason: 'no-sources' });
+          toast.warning(t().ytAllFailed);
+        }
+      } finally {
         useKaraoke.getState().patch({ ytResolving: false });
-        toast.warning(t().ytAllFailed);
       }
     },
 
@@ -1227,10 +1399,11 @@ export function useKaraokeEngine() {
       if (!song) return;
       st.patch({ syncState: 'syncing' });
       try {
+        const full = st.fullActive;
         const direct = st.directActive;
         const mode: 'full' | 'preview' =
-          direct || useKaraoke.getState().ytActive || useKaraoke.getState().ytProbing ? 'full' : 'preview';
-        if (!direct && getEngine().song?.id !== `itunes:${song.trackId}`) {
+          full || direct || useKaraoke.getState().ytActive || useKaraoke.getState().ytProbing ? 'full' : 'preview';
+        if (!full && !direct && getEngine().song?.id !== `itunes:${song.trackId}`) {
           await this.ensureShell(song).catch(() => null);
         }
         const prep = await fetchPrepare(song, mode);
@@ -1295,7 +1468,9 @@ export function useKaraokeEngine() {
       const favorites = getSetting<DiscoverSong[]>('favorites', []);
       useKaraoke.getState().patch({
         lang: l,
-        favorites: Array.isArray(favorites) ? favorites.filter((f) => f && f.id && f.previewUrl) : [],
+        favorites: Array.isArray(favorites)
+          ? favorites.filter((f) => f && f.id && (f.previewUrl || (f.fullSources && f.fullSources.length > 0)))
+          : [],
       });
       actions.refreshLibrary();
       actions.refreshTakes();

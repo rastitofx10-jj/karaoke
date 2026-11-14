@@ -468,6 +468,10 @@ export function YouTubeStage({ onOpenEditor }: { onOpenEditor?: () => void }) {
   const directActive = useKaraoke((s) => s.directActive);
   const directResolving = useKaraoke((s) => s.directResolving);
   const directChannel = useKaraoke((s) => s.directChannel);
+  const fullActive = useKaraoke((s) => s.fullActive);
+  const fullResolving = useKaraoke((s) => s.fullResolving);
+  const fullProvider = useKaraoke((s) => s.fullProvider);
+  const fullChannel = useKaraoke((s) => s.fullChannel);
   const duration = useKaraoke((s) => s.duration);
   const recording = useKaraoke((s) => s.recording);
   const activeDiscover = useKaraoke((s) => s.activeDiscover);
@@ -604,6 +608,66 @@ export function YouTubeStage({ onOpenEditor }: { onOpenEditor?: () => void }) {
         </>
       )}
 
+      {/* v5.0 — THE FULL-LENGTH TIER: SoundCloud/Audius download + decode */}
+      {fullResolving && !fullActive && !ytActive && !ytProbing && !directActive && (
+        <div className="flex items-center gap-2.5 rounded-lg border border-[color-mix(in_srgb,var(--good)_40%,transparent)] bg-[color-mix(in_srgb,var(--good)_10%,transparent)] px-3 py-2.5">
+          <Loader2 size={15} className="animate-spin text-[var(--good)]" aria-hidden />
+          <span className="text-[12px] font-bold text-[var(--good)]">{t.fullDownloading}</span>
+        </div>
+      )}
+
+      {/* v5.0 — full-length song live: the engine owns the clock, the whole
+          DSP chain (vocal removal, key shift, speed, scoring) runs on the
+          REAL FULL SONG — this is the primary experience now */}
+      {fullActive && !ytActive && (
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center gap-2.5 rounded-lg border border-[color-mix(in_srgb,var(--good)_45%,transparent)] bg-[color-mix(in_srgb,var(--good)_10%,transparent)] px-3 py-2.5">
+            <AudioLines size={16} className="shrink-0 text-[var(--good)]" aria-hidden />
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[12px] font-black text-[var(--good)]">
+                {fullProvider === 'audius' ? t.fullLiveAu : t.fullLiveSc}
+              </p>
+              <p className="truncate text-[10.5px] text-[var(--dim)]">
+                {t.source}: {fullChannel || 'SoundCloud'}{duration > 0 ? ` · ${fmtSec(duration)}` : ''}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => actions.setYt(null, { resumePreview: false })}
+              className="flex min-h-[36px] shrink-0 items-center gap-1.5 rounded-lg border border-[var(--line2)] bg-[var(--panel2)] px-2.5 text-[11px] font-bold text-[var(--dim)] transition-colors hover:text-[var(--text)]"
+            >
+              <RotateCcw size={12} aria-hidden />
+              {t.ytOff}
+            </button>
+          </div>
+          <p className="text-[10.5px] leading-relaxed text-[var(--faint)]">{t.fullHint}</p>
+          <div className="flex items-center gap-1.5">
+            <span className="shrink-0 text-[10px] font-bold text-[var(--faint)]" title={t.calibrateHint}>
+              {t.calibrate}
+            </span>
+            <button
+              type="button"
+              onClick={() => actions.nudgeSync(-0.25)}
+              title={t.nudgeMinus}
+              aria-label={t.nudgeMinus}
+              className="flex h-8 w-9 items-center justify-center rounded border border-[var(--line2)] bg-[var(--panel2)] text-[13px] font-black text-[var(--dim)] transition-colors hover:text-[var(--a)]"
+            >
+              −
+            </button>
+            <button
+              type="button"
+              onClick={() => actions.nudgeSync(0.25)}
+              title={t.nudgePlus}
+              aria-label={t.nudgePlus}
+              className="flex h-8 w-9 items-center justify-center rounded border border-[var(--line2)] bg-[var(--panel2)] text-[13px] font-black text-[var(--dim)] transition-colors hover:text-[var(--a)]"
+            >
+              +
+            </button>
+            <span className="truncate text-[9.5px] text-[var(--faint)]">{t.calibrateHint}</span>
+          </div>
+        </div>
+      )}
+
       {/* v3.4 — direct-audio tier: resolving the server-side stream */}
       {directResolving && !directActive && !ytActive && !ytProbing && (
         <div className="flex items-center gap-2.5 rounded-lg border border-[color-mix(in_srgb,var(--b)_40%,transparent)] bg-[var(--b-soft)] px-3 py-2.5">
@@ -664,7 +728,7 @@ export function YouTubeStage({ onOpenEditor }: { onOpenEditor?: () => void }) {
       {/* preview fallback — honest about the 30s, the REASON it happened
           (v4.0: one law — no-sources / embeds-blocked — spoken to the user),
           and one click from both the retry and the Network Doctor */}
-      {!ytActive && !ytResolving && !ytProbing && !directActive && !directResolving && activeDiscover && (
+      {!ytActive && !ytResolving && !ytProbing && !directActive && !directResolving && !fullActive && !fullResolving && activeDiscover && (
         <div className="flex flex-col gap-2">
           <div className="flex items-center gap-2 rounded-lg border border-[color-mix(in_srgb,var(--warn)_40%,transparent)] bg-[color-mix(in_srgb,var(--warn)_9%,transparent)] px-3 py-2.5">
             <AlertCircle size={15} className="shrink-0 text-[var(--warn)]" aria-hidden />
@@ -708,8 +772,8 @@ export function YouTubeStage({ onOpenEditor }: { onOpenEditor?: () => void }) {
         </div>
       )}
 
-      {/* manual paste — secondary, only when the auto session is off */}
-      {!ytActive && !ytResolving && !ytProbing && !directActive && !directResolving && (
+      {/* manual paste — secondary, only when nothing full is playing */}
+      {!ytActive && !ytResolving && !ytProbing && !directActive && !directResolving && !fullActive && (
         <>
           <div className="flex gap-2">
             <div className="relative min-w-0 flex-1">

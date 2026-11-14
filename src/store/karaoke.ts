@@ -87,6 +87,16 @@ interface KaraokeState {
   directVideoId: string | null;
   directChannel: string | null;
 
+  /* v5.0 — THE FULL-LENGTH TIER: SoundCloud / Audius full tracks resolved
+   * server-side and decoded into Web Audio. Plays before YouTube is even
+   * considered; the whole karaoke machine runs on the REAL FULL SONG. */
+  fullActive: boolean;
+  fullResolving: boolean;
+  /** Engine song id of the active full source (`sc:123` / `au:abc`). */
+  fullId: string | null;
+  fullProvider: 'soundcloud' | 'audius' | null;
+  fullChannel: string | null;
+
   /* v4.0 — WHY the last full-song attempt landed on the preview: the
    * Network Doctor and the fallback panel speak this reason to the user
    * instead of a generic "did not load". One law, one source. */
@@ -173,6 +183,13 @@ export const useKaraoke = create<KaraokeState>((set) => ({
   directResolving: false,
   directVideoId: null,
   directChannel: null,
+
+  fullActive: false,
+  fullResolving: false,
+  fullId: null,
+  fullProvider: null,
+  fullChannel: null,
+
   fullFailReason: 'none' as const,
 
   song: null,
