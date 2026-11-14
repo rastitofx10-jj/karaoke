@@ -16,7 +16,7 @@ const azeretMono = Azeret_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "TITO KARAOKE v5.0 · אולפן קריוקי טיטו — FULL SONGS, ALWAYS",
+  title: "TITO KARAOKE v6.0 · אולפן קריוקי טיטו — FULL SONGS, ALWAYS",
   description:
     "קריוקי בדפדפן שסוף סוף עובד: חיפוש שירים מובנה (בלי ייבוא קבצים), מילים מסונכרנות אוטומטית ברמת המילה עם AI, שירים מלאים אמיתיים (SoundCloud · Audius · YouTube) שמתנגנים מהשנייה הראשונה עד האחרונה, הסרת קולות חיה, ניקוד זמרים בזמן אמת והקלטות. A karaoke studio that finally works: built-in search, AI-synced word-level lyrics, REAL full-length songs (SoundCloud · Audius · YouTube) from the first second to the last, live vocal removal, real-time scoring and recordings.",
   keywords: [

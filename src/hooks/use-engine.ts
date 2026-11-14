@@ -47,7 +47,9 @@ const t = () => DICTS[lang()];
 
 /** Download an official preview clip through our same-origin proxy. */
 async function fetchAudioFile(song: DiscoverSong): Promise<File> {
-  const res = await fetch(`/api/discover/audio?preview=${encodeURIComponent(song.previewUrl)}`);
+  const res = await fetch(`/api/discover/audio?preview=${encodeURIComponent(song.previewUrl)}`, {
+    signal: AbortSignal.timeout(30_000),
+  });
   if (!res.ok) throw new Error('audio download failed');
   const type = res.headers.get('content-type') ?? 'audio/mp4';
   const buf = await res.arrayBuffer();
@@ -73,7 +75,9 @@ async function fetchPrepare(song: DiscoverSong, mode: 'full' | 'preview'): Promi
       mode,
     });
     if (mode === 'preview') qs.set('preview', song.previewUrl);
-    const res = await fetch(`/api/discover/prepare?${qs.toString()}`);
+    const res = await fetch(`/api/discover/prepare?${qs.toString()}`, {
+      signal: AbortSignal.timeout(20_000),
+    });
     if (!res.ok) return null;
     return (await res.json()) as PrepareResult;
   } catch {
@@ -97,7 +101,9 @@ async function fetchYtCandidates(
       variant,
     });
     if (fresh) qs.set('fresh', '1');
-    const res = await fetch(`/api/discover/youtube?${qs.toString()}`);
+    const res = await fetch(`/api/discover/youtube?${qs.toString()}`, {
+      signal: AbortSignal.timeout(20_000),
+    });
     if (!res.ok) return [];
     const data = (await res.json()) as { candidates?: YtCandidate[] };
     return Array.isArray(data.candidates)
@@ -117,7 +123,9 @@ async function fetchFullSongSources(song: DiscoverSong): Promise<FullSource[]> {
       title: song.title,
       durationMs: String(Math.max(0, Math.round(song.durationMs)) || 0),
     });
-    const res = await fetch(`/api/discover/fullsong?${qs.toString()}`);
+    const res = await fetch(`/api/discover/fullsong?${qs.toString()}`, {
+      signal: AbortSignal.timeout(25_000),
+    });
     if (!res.ok) return [];
     const data = (await res.json()) as { sources?: FullSource[] };
     return Array.isArray(data.sources)
@@ -133,12 +141,17 @@ async function fetchFullSongSources(song: DiscoverSong): Promise<FullSource[]> {
 /** v5.0 — download + decode one full-length source into a Web Audio buffer.
  *  The raw bytes are an fMP4 concat (SoundCloud HLS) or mp3 (Audius); when
  *  the browser's decoder rejects the raw container, one retry with a
- *  server-side ffmpeg transcode settles it. Total: never throws. */
+ *  server-side ffmpeg transcode settles it. v6.0 — both fetches carry a
+ *  hard timeout: a stalled network degrades to the NEXT source instead of
+ *  hanging the golden path forever. Total: never throws. */
 async function fetchFullAudioBuffer(source: FullSource): Promise<AudioBuffer | null> {
   const base = `/api/discover/fullstream?p=${source.provider === 'soundcloud' ? 'sc' : 'au'}&id=${encodeURIComponent(source.id)}`;
+  /* 150s ceiling: a 10-minute song on a slow link can legitimately take
+   * ~2 minutes through the proxy — beyond that it is a stall, not slowness */
+  const DL_TIMEOUT_MS = 150_000;
   let buf: ArrayBuffer | null = null;
   try {
-    const res = await fetch(base);
+    const res = await fetch(base, { signal: AbortSignal.timeout(DL_TIMEOUT_MS) });
     if (res.ok) buf = await res.arrayBuffer();
   } catch {
     buf = null;
@@ -150,7 +163,7 @@ async function fetchFullAudioBuffer(source: FullSource): Promise<AudioBuffer | n
     /* container the browser can't decode → ffmpeg fallback (mp3) */
   }
   try {
-    const res2 = await fetch(`${base}&transcode=1`);
+    const res2 = await fetch(`${base}&transcode=1`, { signal: AbortSignal.timeout(DL_TIMEOUT_MS) });
     if (!res2.ok) return null;
     const buf2 = await res2.arrayBuffer();
     if (buf2.byteLength < 250_000) return null;
@@ -758,6 +771,22 @@ export function useKaraokeEngine() {
           this.applyPrepare(await prepFullPromise, 'full', song);
           return;
         }
+        /* v6.0 — sources existed but every download failed: the search-time
+         * list can be STALE (uploader deleted, id rotated). ONE fresh
+         * server resolve before YouTube is considered. This is the
+         * difference between a transient failure and a wall. (When the row
+         * arrived with NO sources, fullSourcesP was already a fresh resolve.) */
+        if (sources.length > 0 && song.fullSources && song.fullSources.length > 0) {
+          const fresh = await fetchFullSongSources(song);
+          if (
+            fresh.length > 0 &&
+            (await this.tryFullAudio(song, fresh))
+          ) {
+            void this.logPlay(song);
+            this.applyPrepare(await prepFullPromise, 'full', song);
+            return;
+          }
+        }
 
         /* ---------- TIER 2: YouTube embeds (probe gate → direct audio) */
         const yt = await ytPromise;
@@ -778,7 +807,11 @@ export function useKaraokeEngine() {
         }
 
         /* ---------- TIER 3: honestly-labeled 30s preview */
-        useKaraoke.getState().patch({ fullFailReason: 'no-sources' });
+        /* v6.0 — one law, most specific wins: a tier-1 download failure we
+         * observed is NOT "no sources" — keep it ("try again" helps). */
+        if (useKaraoke.getState().fullFailReason === 'none') {
+          useKaraoke.getState().patch({ fullFailReason: 'no-sources' });
+        }
         const shellOk = await ensureShellOnce().then(
           () => getEngine().song?.id === `itunes:${song.trackId}`,
         );
@@ -806,9 +839,11 @@ export function useKaraokeEngine() {
      * clock. Total: never throws, never leaves partial state.
      */
     async tryFullAudio(song: DiscoverSong, sources: FullSource[]): Promise<boolean> {
+      let attempted = 0;
       for (const src of sources.slice(0, 3)) {
         if (useKaraoke.getState().activeDiscover?.id !== song.id) return false; // session moved on
         useKaraoke.getState().patch({ fullResolving: true });
+        attempted++;
         try {
           const audio = await fetchFullAudioBuffer(src);
           /* a REAL full song or nothing — 30s junk never owns the clock */
@@ -855,6 +890,13 @@ export function useKaraokeEngine() {
         } finally {
           useKaraoke.getState().patch({ fullResolving: false });
         }
+      }
+      /* v6.0 — the honest reason: sources EXISTED but every download
+       * failed. This is transient (stale ids / slow link) — "try again"
+       * genuinely helps, unlike a wall. Later tiers must NOT overwrite
+       * this with their generic verdicts (one law, most specific wins). */
+      if (attempted > 0 && useKaraoke.getState().activeDiscover?.id === song.id) {
+        useKaraoke.getState().patch({ fullFailReason: 'download-failed' });
       }
       return false;
     },
@@ -1187,7 +1229,9 @@ export function useKaraokeEngine() {
         let pick: YtCandidate | null = null;
         for (const c of cands.slice(0, 5)) {
           try {
-            const r = await fetch(`/api/discover/stream?probe=1&id=${encodeURIComponent(c.videoId)}`);
+            const r = await fetch(`/api/discover/stream?probe=1&id=${encodeURIComponent(c.videoId)}`, {
+              signal: AbortSignal.timeout(30_000),
+            });
             const d = (await r.json()) as { ok?: boolean; bytes?: number };
             if (d?.ok && (d.bytes ?? 0) > 200_000) {
               pick = c;
@@ -1200,7 +1244,9 @@ export function useKaraokeEngine() {
         if (!pick) return false;
 
         /* 2 — download the whole track through the proxy + decode */
-        const res = await fetch(`/api/discover/stream?id=${encodeURIComponent(pick.videoId)}`);
+        const res = await fetch(`/api/discover/stream?id=${encodeURIComponent(pick.videoId)}`, {
+          signal: AbortSignal.timeout(150_000),
+        });
         if (!res.ok) return false;
         const buf = await res.arrayBuffer();
         if (buf.byteLength < 200_000) return false; // an error page, not a song
@@ -1255,14 +1301,22 @@ export function useKaraokeEngine() {
       if (!useKaraoke.getState().ytProbing) return;
       const song = useKaraoke.getState().activeDiscover;
       const cands = useKaraoke.getState().ytCandidates;
+      /* v4.0 — every embeddable check the browser could make failed:
+       * the wall is either this network or these specific videos.
+       * v6.0 — one law, most specific wins: a tier-1 download failure we
+       * already observed outranks the generic YouTube verdict. */
+      const prior = useKaraoke.getState().fullFailReason;
       useKaraoke.getState().patch({
         ytProbing: false,
         ytActive: false,
         ytVideoId: null,
         ytIndex: 0,
-        /* v4.0 — every embeddable check the browser could make failed:
-         * the wall is either this network or these specific videos */
-        fullFailReason: cands.length > 0 ? 'embeds-blocked' : 'no-sources',
+        fullFailReason:
+          prior === 'download-failed'
+            ? 'download-failed'
+            : cands.length > 0
+              ? 'embeds-blocked'
+              : 'no-sources',
       });
       /* tier 2 — the server may still reach sources the browser cannot */
       if (song && (await this.tryDirectAudio(song, cands))) return;
@@ -1341,7 +1395,10 @@ export function useKaraokeEngine() {
            * the full song needs its own timeline back */
           void this.attachFullLyrics(song);
         } else {
-          useKaraoke.getState().patch({ fullFailReason: 'no-sources' });
+          /* v6.0 — one law: keep a more specific tier-1 verdict */
+          if (useKaraoke.getState().fullFailReason === 'none') {
+            useKaraoke.getState().patch({ fullFailReason: 'no-sources' });
+          }
           toast.warning(t().ytAllFailed);
         }
       } finally {

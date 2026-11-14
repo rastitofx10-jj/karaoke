@@ -44,7 +44,10 @@ interface DiagRow {
 
 interface ServerDiag {
   at: number;
+  ffmpeg: boolean;
   providers: {
+    soundcloud: { state: 'ok' | 'blocked' | 'slow' | 'down'; ms: number | null };
+    audius: { state: 'ok' | 'blocked' | 'slow' | 'down'; ms: number | null };
     lrclib: { state: 'ok' | 'blocked' | 'slow' | 'down'; ms: number | null };
     netease: { state: 'ok' | 'blocked' | 'slow' | 'down'; ms: number | null };
     itunes: { state: 'ok' | 'blocked' | 'slow' | 'down'; ms: number | null };
@@ -125,11 +128,14 @@ export function NetworkDoctor({ onClose }: { onClose: () => void }) {
     setRunning(true);
     const t0 = Date.now();
     setRows([
+      { key: 'soundcloud', label: t.diagSoundcloud, state: 'checking', ms: null },
+      { key: 'audius', label: t.diagAudius, state: 'checking', ms: null },
       { key: 'lrclib', label: t.diagLrclib, state: 'checking', ms: null },
       { key: 'netease', label: t.diagNetease, state: 'checking', ms: null },
       { key: 'itunes', label: t.diagItunes, state: 'checking', ms: null },
       { key: 'ytEmbed', label: t.diagYtEmbed, state: 'checking', ms: null },
       { key: 'ytServer', label: t.diagYtServer, state: 'checking', ms: null },
+      { key: 'ffmpeg', label: t.diagFfmpeg, state: 'checking', ms: null },
     ]);
 
     /* server half + browser half, in parallel */
@@ -142,6 +148,18 @@ export function NetworkDoctor({ onClose }: { onClose: () => void }) {
     const [server, embed] = await Promise.all([serverPromise, embedPromise]);
 
     setRows([
+      {
+        key: 'soundcloud',
+        label: t.diagSoundcloud,
+        state: server?.providers.soundcloud.state ?? 'down',
+        ms: server?.providers.soundcloud.ms ?? null,
+      },
+      {
+        key: 'audius',
+        label: t.diagAudius,
+        state: server?.providers.audius.state ?? 'down',
+        ms: server?.providers.audius.ms ?? null,
+      },
       {
         key: 'lrclib',
         label: t.diagLrclib,
@@ -167,6 +185,13 @@ export function NetworkDoctor({ onClose }: { onClose: () => void }) {
         state: server?.providers.ytServer.state ?? 'down',
         ms: server?.providers.ytServer.ms ?? null,
       },
+      /* ffmpeg is a binary local fact, not a ping — ok or blocked, no ms */
+      {
+        key: 'ffmpeg',
+        label: t.diagFfmpeg,
+        state: server ? (server.ffmpeg ? 'ok' : 'blocked') : 'down',
+        ms: null,
+      },
     ]);
     setRanAt(Date.now());
     setRunning(false);
@@ -180,18 +205,27 @@ export function NetworkDoctor({ onClose }: { onClose: () => void }) {
   }, []);
 
   /* the verdict — one honest sentence, chosen by the single status law:
-   *  embed wall > server wall > lyrics providers > all healthy */
+   *  tier-1 full-length catalogs > embed wall > server wall > lyrics
+   *  providers > ffmpeg > all healthy */
   const verdict: string | null = (() => {
     if (running || rows.length === 0) return null;
     const byKey = new Map(rows.map((r) => [r.key, r.state]));
+    const sc = byKey.get('soundcloud');
+    const au = byKey.get('audius');
     const ytEmbed = byKey.get('ytEmbed');
     const ytServer = byKey.get('ytServer');
+    const ffmpeg = byKey.get('ffmpeg');
     const lyricsDown =
       (byKey.get('lrclib') === 'down' || byKey.get('lrclib') === 'blocked') &&
       (byKey.get('netease') === 'down' || byKey.get('netease') === 'blocked');
+    /* both tier-1 catalogs dead — full songs are structurally down */
+    const fullDown =
+      (sc === 'down' || sc === 'blocked') && (au === 'down' || au === 'blocked');
+    if (fullDown) return t.diagVerdictFullDown;
     if (ytEmbed === 'blocked' || ytEmbed === 'down') return t.diagVerdictEmbed;
     if (ytServer === 'blocked' || ytServer === 'down') return t.diagVerdictServer;
     if (lyricsDown) return t.diagVerdictLyrics;
+    if (ffmpeg === 'blocked') return t.diagVerdictFfmpeg;
     if (rows.every((r) => r.state === 'ok' || r.state === 'slow')) return t.diagVerdictAll;
     if (rows.every((r) => r.state === 'down')) return t.diagVerdictNone;
     return t.diagVerdictAll;

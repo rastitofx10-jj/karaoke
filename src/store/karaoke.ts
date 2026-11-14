@@ -99,8 +99,10 @@ interface KaraokeState {
 
   /* v4.0 — WHY the last full-song attempt landed on the preview: the
    * Network Doctor and the fallback panel speak this reason to the user
-   * instead of a generic "did not load". One law, one source. */
-  fullFailReason: 'none' | 'no-sources' | 'embeds-blocked';
+   * instead of a generic "did not load". One law, one source.
+   * v6.0 — 'download-failed': tier-1 sources EXISTED but every download
+   * failed (stale ids / slow link) — transient, "try again" helps. */
+  fullFailReason: 'none' | 'no-sources' | 'embeds-blocked' | 'download-failed';
 
   /* song */
   song: UiSong | null;

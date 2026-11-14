@@ -1,4 +1,4 @@
-/* TITO KARAOKE STUDIO v4.0 — GET /api/discover/diag
+/* TITO KARAOKE STUDIO v6.0 — GET /api/discover/diag
  * The Network Doctor, server half: live pings of every provider the
  * product depends on, each with latency, each total (never throws).
  * The client half (src/components/karaoke/NetworkDoctor.tsx) adds the
@@ -6,20 +6,24 @@
  *
  *   GET /api/discover/diag  →  200 {
  *     at: number,
+ *     ffmpeg: boolean,                  // transcode fallback availability
  *     providers: {
- *       lrclib:      ProviderState,   // synced lyrics (stage 1-3)
- *       netease:     ProviderState,   // synced lyrics (stage 4)
- *       itunes:      ProviderState,   // catalog + 30s previews
- *       ytServer:    ProviderState,   // direct-audio tier (innertube)
+ *       soundcloud: ProviderState,   // FULL-LENGTH tier 1 (v5.0)
+ *       audius:     ProviderState,   // FULL-LENGTH tier 1 (v5.0)
+ *       lrclib:     ProviderState,   // synced lyrics (stage 1-3)
+ *       netease:    ProviderState,   // synced lyrics (stage 4)
+ *       itunes:     ProviderState,   // catalog + 30s previews
+ *       ytServer:   ProviderState,   // direct-audio tier (innertube)
  *     } }
  *
  * Every check is a real question the product asks in production — not a
- * synthetic ping: LRCLIB search, NetEase search, iTunes search and a
- * known-video innertube probe, all with hard timeouts, all answered
+ * synthetic ping: provider searches with hard timeouts, all answered
  * 'ok' | 'blocked' | 'slow' | 'down' with the measured latency.
  */
 
 import { NextResponse } from 'next/server';
+import { execFile } from 'node:child_process';
+import { scSearch, audiusSearch } from '@/lib/karaoke/full-server';
 import { resolveDirectAudio } from '@/lib/karaoke/yt-audio-server';
 
 export const dynamic = 'force-dynamic';
@@ -61,6 +65,36 @@ function verdict(answered: boolean, ms: number): ProviderState {
   return { state: 'ok', ms };
 }
 
+/** SoundCloud — the tier-1 full-length catalog: a real search (the exact
+ *  call loadDiscoverSong makes). A dead client_id reads as 'blocked'
+ *  because the host answers but the API refuses — the doctor must not
+ *  mistake a key rotation for a network wall. */
+async function checkSoundcloud(): Promise<ProviderState> {
+  const t0 = Date.now();
+  try {
+    const tracks = await scSearch('hello adele', 3);
+    const ms = Date.now() - t0;
+    if (tracks.length > 0) return verdict(true, ms);
+    /* answered (no throw) but zero usable tracks — walled or rotated */
+    return { state: 'blocked', ms };
+  } catch {
+    return { state: 'down', ms: Date.now() - t0 };
+  }
+}
+
+/** Audius — the second tier-1 full-length catalog, same honesty law. */
+async function checkAudius(): Promise<ProviderState> {
+  const t0 = Date.now();
+  try {
+    const tracks = await audiusSearch('hello', 3);
+    const ms = Date.now() - t0;
+    if (tracks.length > 0) return verdict(true, ms);
+    return { state: 'blocked', ms };
+  } catch {
+    return { state: 'down', ms: Date.now() - t0 };
+  }
+}
+
 /** LRCLIB — a real search (the exact call the lyric cascade makes) */
 async function checkLrclib(): Promise<ProviderState> {
   const r = await timedFetch('https://lrclib.net/api/search?track_name=hello&artist_name=adele');
@@ -98,15 +132,39 @@ async function checkYtServer(): Promise<ProviderState> {
   }
 }
 
+/* ffmpeg availability — cached for the process lifetime (it cannot change
+ * without a restart). It powers the transcode fallback when a browser
+ * rejects SoundCloud's fMP4 concat; a missing ffmpeg is a degradation the
+ * doctor should speak about, not hide. */
+let ffmpegCache: boolean | null = null;
+function ffmpegAvailable(): Promise<boolean> {
+  if (ffmpegCache !== null) return Promise.resolve(ffmpegCache);
+  return new Promise((resolve) => {
+    try {
+      execFile('ffmpeg', ['-version'], { timeout: 4000 }, (err) => {
+        ffmpegCache = !err;
+        resolve(ffmpegCache);
+      });
+    } catch {
+      ffmpegCache = false;
+      resolve(false);
+    }
+  });
+}
+
 export async function GET() {
-  const [lrclib, netease, itunes, ytServer] = await Promise.all([
+  const [soundcloud, audius, lrclib, netease, itunes, ytServer, ffmpeg] = await Promise.all([
+    checkSoundcloud(),
+    checkAudius(),
     checkLrclib(),
     checkNetease(),
     checkItunes(),
     checkYtServer(),
+    ffmpegAvailable(),
   ]);
   return NextResponse.json({
     at: Date.now(),
-    providers: { lrclib, netease, itunes, ytServer },
+    ffmpeg,
+    providers: { soundcloud, audius, lrclib, netease, itunes, ytServer },
   });
 }

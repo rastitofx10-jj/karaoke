@@ -1,22 +1,23 @@
-# TITO KARAOKE STUDIO · v4.0 — THE TRANSPARENT MACHINE
+# TITO KARAOKE STUDIO · v6.0 — FULL SONGS, ALWAYS · THE BULLETPROOF PASS
 
-**אולפן קריוקי מקצועי שלם, בדפדפן. חיפוש שיר → שיר מלא שמאומת בפועל → מילים מסונכרנות → שירה. וכשמשהו חסום — המכונה אומרת לכם בדיוק מה, למה, ומה עושים עכשיו.**
-A complete professional karaoke studio that runs entirely in the browser. Search a song, get the **full song** — verified to actually play before it ever reaches your ears — with **time-synced lyrics**, and sing. And when something is blocked, the machine **tells you exactly what, why, and what to do next** — the Network Doctor pings every provider live and speaks the verdict in one sentence.
+**אולפן קריוקי מקצועי שלם, בדפדפן. חיפוש שיר → שיר מלא אמיתי (SoundCloud · Audius, בלי תלות ב-YouTube) → מילים מסונכרנות → שירה. וכשמשהו חסום — המכונה אומרת לכם בדיוק מה, למה, ומה עושים עכשיו.**
+A complete professional karaoke studio that runs entirely in the browser. Search a song, get the **REAL full-length song** (SoundCloud + Audius catalogs, streamed same-origin and decoded into Web Audio — YouTube-independent) with **time-synced lyrics**, and sing. And when something is blocked, the machine **tells you exactly what, why, and what to do next** — the Network Doctor pings all 8 providers live and speaks the verdict in one sentence.
 
 ---
 
-## THE GOLDEN PATH (v4.0 — evidence-backed, tiered, transparent)
+## THE GOLDEN PATH (v6.0 — evidence-backed, tiered, transparent)
 
-1. **Search** — the iTunes catalog (millions of songs, official artwork + metadata) plus live local charts.
-2. **The probe gate** — the server ranks up to 12 full-length YouTube sources; the browser then mounts tiny **muted probe players in parallel waves** and keeps only a source whose clock actually moves. A source that plays silently/bot-walled never passes; a source that plays is promoted instantly. This is the only reliable embeddability check in existence — server-side probes (oEmbed etc.) return "embeddable" for videos the player then rejects with error 150.
-3. **Tap-for-sound** — the promoted session starts muted (autoplay-policy safe), so the clock, lyrics and mic run from the first second; one tap on the overlay turns the sound on.
-4. **The direct-audio tier** — if the iframe route is blocked (embed-disabled or datacenter walls), the server itself resolves a direct audio stream (visionos innertube client — cipher-free googlevideo URLs) and **proxies the bytes**. The track is decoded into Web Audio, which unlocks the **whole karaoke machine on the full song**: vocal removal, singer isolation, key shift, speed, melody scan, scoring, A-B loop, recording — none of which can process iframe audio.
-5. **Lyrics in place** — LRCLIB synced lyrics on the song's original timeline across all three tiers; every stale timeline is dropped at the state machine (clip words can never land on a full song and vice versa). **±0.25 s calibration** for intro drift.
+1. **Search** — the iTunes catalog (millions of songs, official artwork + metadata) plus live local charts, with full-length provider sources attached live.
+2. **Tier 1 — the full-length catalogs (v5.0)** — SoundCloud (millions of full-length tracks, policy-ALLOW, live-extracted anonymous client_id) and Audius (decentralized, full-length mp3s). The server does ALL the external talking (signed playlists, HLS segment concatenation, ffmpeg transcode fallback) and the browser decodes the complete track into Web Audio — which unlocks the **whole karaoke machine on the full song**: vocal removal, singer isolation, key shift, speed, melody scan, scoring, A-B loop, recording. v6.0 adds the **query-variant cascade** ("artist title" → "title alone") so script differences and featuring artists stop hiding full tracks.
+3. **Tier 2 — the probe gate** — the server ranks full-length YouTube sources; the browser mounts tiny **muted probe players in parallel waves** and keeps only a source whose clock actually moves; then the direct-audio tier (server-side resolve + byte proxy) for walled networks.
+4. **Tap-for-sound** — a promoted session starts muted (autoplay-policy safe), so the clock, lyrics and mic run from the first second; one tap on the overlay turns the sound on.
+5. **Lyrics in place** — LRCLIB synced lyrics on the song's original timeline across all tiers (NetEase as the second lyrics provider); every stale timeline is dropped at the state machine (clip words can never land on a full song and vice versa). **±0.25 s calibration** for intro drift.
 6. **Original ⇄ Karaoke version** — one toggle re-resolves the backing track to instrumental karaoke uploads (no lead vocals).
-7. **Honest fallback — v4.0 makes it TRANSPARENT** — both tiers blocked? A clear 30-second-preview notice that **names the actual reason** ("this network is likely blocked by YouTube" vs "the videos found for this song are not embeddable"), plus:
-   - **THE NETWORK DOCTOR** — one click pings LRCLIB, NetEase, iTunes, the in-browser YouTube player (a real muted probe) and the direct-audio tier, and renders each with a status dot + latency. The verdict is one honest sentence with the next action: paste a link / import a file / tap-sync lyrics. No more silent mysteries — a wall is named, measured and routed around.
+7. **Honest fallback — v6.0 makes it COMPLETE** — everything blocked? A clear 30-second-preview notice that **names the actual reason** ("sources were found but the download failed — try again, it is usually transient" / "this network is likely blocked by YouTube" / "the videos found for this song are not embeddable" / "no full sources were found"), plus:
+   - **THE NETWORK DOCTOR v6.0** — one click pings **SoundCloud, Audius**, LRCLIB, NetEase, iTunes, the in-browser YouTube player (a real muted probe), the direct-audio tier **and ffmpeg availability** — 8 rows, each with a status dot + latency. The verdict is one honest sentence with the next action: retry / paste a link / import a file / install ffmpeg / tap-sync lyrics. No more silent mysteries.
+   - **Self-healing retries** — stale search-time sources get ONE fresh server resolve before YouTube is considered; every network call carries a hard timeout so a stalled link degrades to the next source instead of hanging the session.
    - **Tap-sync CTA** — when a song only has plain lyrics, the stage invites you to tap your own sync in the editor (one minute to karaoke).
-   - **LRC autodetect** — paste an LRC/SRT into the editor and the timestamps are kept (previously flattened to plain text — a real LRC could not be re-loaded through the editor).
+   - **LRC autodetect** — paste an LRC/SRT into the editor and the timestamps are kept.
    - Manual-paste field, retry door, clip-synced lyrics. The stage never sits silent, never lies, never surprises you with a 29-second song pretending to be a song.
 8. Sing — mic console, vocal engine, live pitch, scoring, recording. Everything below still applies.
 

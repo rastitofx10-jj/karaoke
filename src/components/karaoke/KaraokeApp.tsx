@@ -156,7 +156,7 @@ export function KaraokeApp() {
           </span>
         </button>
         <span className="kv hidden rounded border border-[var(--line2)] bg-[var(--well)] px-1.5 py-px text-[9px] text-[var(--faint)] sm:inline">
-          v5.0 · FULL SONGS, ALWAYS — SOUNDCLOUD · AUDIUS
+          v6.0 · FULL SONGS, ALWAYS — SOUNDCLOUD · AUDIUS
         </span>
 
         <span className="flex-1" />

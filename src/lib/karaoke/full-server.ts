@@ -88,7 +88,7 @@ async function fetchJson<T>(url: string, timeoutMs = 10_000, headers?: Record<st
 
 async function fetchBytes(
   url: string,
-  timeoutMs: 25_000,
+  timeoutMs: number = 25_000,
   headers?: Record<string, string>,
 ): Promise<{ bytes: Buffer; mime: string } | null> {
   try {
@@ -733,27 +733,47 @@ export function standaloneRows(
 
 /**
  * Fresh full-source resolution for ONE catalog song (load-time / retry).
- * Runs a provider search scoped to the song's title+artist, then matches.
+ * v6.0 — QUERY VARIANTS: "artist title" is the dominant upload convention,
+ * but script differences (עומר אדם vs Omer Adam), featuring artists and
+ * label renames break it. When the first variant finds nothing, a second
+ * scoped search (title alone, broader) runs before giving up. Never throws.
  */
 export async function resolveFullSources(
   song: Pick<DiscoverSong, 'title' | 'artist' | 'durationMs'>,
 ): Promise<FullSource[]> {
-  const q = `${song.artist} ${song.title}`.trim();
-  const key = `fullsong:${q.toLowerCase()}:${Math.round(song.durationMs / 1000)}`;
-  const cached = memGet<FullSource[]>(key);
-  if (cached) return cached;
-  const sources = await dedupe(key, async () => {
-    const [sc, au] = await Promise.all([scSearch(q, 20), audiusSearch(q, 8)]);
-    const holder: DiscoverSong[] = [
-      {
-        id: 'probe', trackId: 0, title: song.title, artist: song.artist, album: '',
-        artwork: '', artworkSmall: '', previewUrl: '', durationMs: song.durationMs,
-        genre: null, hasLrc: false,
-      },
-    ];
-    attachFullSources(holder, sc, au);
-    return holder[0].fullSources ?? [];
-  });
-  memSet(key, sources, sources.length > 0 ? 15 * 60 * 1000 : 2 * 60 * 1000);
+  const variants = [`${song.artist} ${song.title}`.trim(), song.title.trim()];
+  const cacheKey = (q: string) =>
+    `fullsong:${q.toLowerCase()}:${Math.round(song.durationMs / 1000)}`;
+
+  /* variant 1 — the production query */
+  const q1 = variants[0] || song.title;
+  let sources = (await resolveVariant(q1)) ?? [];
+  if (sources.length > 0) return sources;
+
+  /* variant 2 — title alone, only when it differs meaningfully */
+  const q2 = variants[1];
+  if (q2 && q2.toLowerCase() !== q1.toLowerCase()) {
+    sources = (await resolveVariant(q2)) ?? [];
+  }
   return sources;
+
+  async function resolveVariant(q: string): Promise<FullSource[]> {
+    const key = cacheKey(q);
+    const cached = memGet<FullSource[]>(key);
+    if (cached) return cached;
+    const found = await dedupe(key, async () => {
+      const [sc, au] = await Promise.all([scSearch(q, 20), audiusSearch(q, 8)]);
+      const holder: DiscoverSong[] = [
+        {
+          id: 'probe', trackId: 0, title: song.title, artist: song.artist, album: '',
+          artwork: '', artworkSmall: '', previewUrl: '', durationMs: song.durationMs,
+          genre: null, hasLrc: false,
+        },
+      ];
+      attachFullSources(holder, sc, au);
+      return holder[0].fullSources ?? [];
+    });
+    memSet(key, found, found.length > 0 ? 15 * 60 * 1000 : 2 * 60 * 1000);
+    return found;
+  }
 }

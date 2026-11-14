@@ -736,7 +736,11 @@ export function YouTubeStage({ onOpenEditor }: { onOpenEditor?: () => void }) {
               <p className="text-[11.5px] font-medium text-[var(--dim)]">{t.previewNotice}</p>
               {fullFailReason !== 'none' && (
                 <p className="mt-0.5 text-[10.5px] font-bold text-[var(--warn)]">
-                  {fullFailReason === 'embeds-blocked' ? t.previewCauseWall : t.previewCauseVideo}
+                  {fullFailReason === 'embeds-blocked'
+                    ? t.previewCauseWall
+                    : fullFailReason === 'download-failed'
+                      ? t.previewCauseDownload
+                      : t.previewCauseVideo}
                 </p>
               )}
             </div>

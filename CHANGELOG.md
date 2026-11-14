@@ -1,5 +1,69 @@
 # TITO KARAOKE STUDIO — Changelog
 
+## 6.0 — THE BULLETPROOF PASS: validation, engineering, honesty (2026-11-14)
+
+The "go over everything and fix it" release: a full engineering validation
+sweep over the whole machine, every finding fixed, everything re-verified
+end-to-end from a real browser.
+
+### ENGINEERING VALIDATION (what the sweep found and fixed)
+
+- **Type-level bug in `fetchBytes` (full-server.ts)** — the signature read
+  `timeoutMs: 25_000`: a literal TYPE annotation, not a default value. Every
+  call passing 30000/60000 was a type error `tsc` caught (runtime hid it).
+  Fixed to `timeoutMs: number = 25_000`; full `tsc --noEmit` is now clean.
+- **Unbounded client fetches** — every network call in the golden path
+  (`fullstream` download + transcode retry, `fullsong`, `youtube`, `prepare`,
+  `stream` probe/download, preview shell) now carries a hard
+  `AbortSignal.timeout`: a stalled network degrades to the NEXT source
+  instead of hanging the session forever. Download ceiling 150s (a 10-minute
+  song on a slow link is legitimate; beyond that it is a stall).
+- **Stale search-time sources** — when the search-time list existed but every
+  download failed (uploader deleted the track, id rotated), the session used
+  to fall straight to YouTube/preview. v6.0 adds ONE fresh server resolve
+  before YouTube is even considered — the transient case now heals itself.
+
+### FULLER SONGS (the query-variant cascade)
+
+- `resolveFullSources` now tries **"artist title" first, then "title alone"**
+  when the first variant finds nothing. Script differences (עומר אדם vs
+  Omer Adam), featuring artists and label renames used to kill tier 1;
+  verified live: **"טרנטונה" (Tuna)** returned zero sources on the old
+  single-variant query and now plays the full 2:49 track through the
+  title-alone variant.
+
+### HONEST MACHINES (one law, most specific reason wins)
+
+- New `fullFailReason: 'download-failed'` — sources EXISTED but every
+  download failed. The fallback panel speaks it ("sources were found but the
+  download failed — try again, usually transient") in HE and EN, and the
+  later tiers (YouTube probe failure, no-sources) no longer overwrite it:
+  the most specific observed reason wins. Verified end-to-end by blocking
+  the fullstream route in a real browser: the panel said download-failed,
+  and after unblocking, "try the full song again" recovered to the FULL
+  song with synced lyrics.
+- **Network Doctor v6.0** — the panel now measures **SoundCloud and Audius**
+  (the tier-1 full-length catalogs, via real production searches) and
+  **ffmpeg availability** (the transcode fallback), alongside LRCLIB,
+  NetEase, iTunes, the YouTube embed probe and the innertube direct tier.
+  Eight rows, one verdict law (tier-1 catalogs down > embed wall > server
+  wall > lyrics > ffmpeg > healthy), HE/EN complete.
+
+### VERIFIED FROM A REAL BROWSER (this machine, this session)
+
+- Bohemian Rhapsody — full 5:54 via **Audius**, 61 synced lines, playing.
+- Believer — full 3:25 via **SoundCloud**, 46 synced lines, playing.
+- בסוף הכל חולף (Omer Adam, Hebrew) — full 3:32 via SoundCloud, 55 synced
+  Hebrew lines from LRCLIB, stage rendering RTL correctly.
+- טרנטונה (Tuna, Hebrew) — zero sources on the old query → full 2:49 via
+  the new title-variant cascade.
+- Block fullstream → honest download-failed message → unblock → retry →
+  full song recovered.
+- Network Doctor: 8 rows live (SC ok 19ms, Audius ok, LRCLIB ok, NetEase
+  ok, iTunes ok, YouTube embed blocked — the honest datacenter wall, YouTube
+  direct blocked, ffmpeg ok).
+- Zero console errors, zero page errors, lint clean, `tsc --noEmit` clean.
+
 ## 5.0 — FULL SONGS, ALWAYS: SOUNDCLOUD + AUDIUS (2026-11-14)
 
 The "it finally just works" release. The core complaint since v2.0 — "only a
